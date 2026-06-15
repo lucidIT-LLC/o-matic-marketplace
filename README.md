@@ -2,7 +2,7 @@
 
 The single catalog for every O-Matic plugin. **The o-matic.ai marketplace.**
 
-Owned by lucidIT-LLC. Marketplace name: `o-matic-ai` (Claude Code marketplace names must be kebab-case — no dots).
+Owned by lucidIT-LLC. Marketplace name: `o-matic.ai` (verified accepted by Claude Code v2.1.114; the docs recommend kebab-case, but dotted names install and resolve).
 
 ## Add it
 
@@ -15,12 +15,12 @@ claude plugin marketplace add lucidIT-LLC/o-matic-marketplace
 ## Install any plugin
 
 ```
-claude plugin install omatic-server-connection@o-matic-ai
-claude plugin install smith@o-matic-ai
-claude plugin install jo@o-matic-ai
-claude plugin install tim@o-matic-ai
-claude plugin install rimmer@o-matic-ai
-claude plugin install o-matic-wordpress-factory@o-matic-ai
+claude plugin install omatic-server-connection@o-matic.ai
+claude plugin install smith@o-matic.ai
+claude plugin install jo@o-matic.ai
+claude plugin install tim@o-matic.ai
+claude plugin install rimmer@o-matic.ai
+claude plugin install o-matic-wordpress-factory@o-matic.ai
 ```
 
 ## What's in the catalog
