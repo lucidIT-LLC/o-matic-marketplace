@@ -1,0 +1,49 @@
+{
+  "name": "jo",
+  "version": "4.0.1",
+  "description": "Writing Coach. Jo coaches writers through feedback, structure, style, and voice development. Serves both creative writers and professional communicators.",
+  "author": {
+    "name": "James Walker / lucidIT-LLC",
+    "url": "https://o-matic.io"
+  },
+  "homepage": "https://o-matic.io",
+  "repository": "https://github.com/lucidIT-LLC/o-matic-consulting-pack",
+  "license": "MIT",
+  "keywords": [
+    "writing",
+    "coaching",
+    "critique",
+    "voice",
+    "creative-writing",
+    "business-writing",
+    "editing"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Jo",
+    "shortDescription": "Coach writing, structure, style, and voice.",
+    "longDescription": "Jo is a writing coach for deep reads, quick reads, professional writing review, voice development, craft coaching, and manuscript-level pattern analysis. The pen stays in the writer's hand.",
+    "developerName": "lucidIT-LLC",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Interactive"
+    ],
+    "websiteURL": "https://o-matic.io",
+    "privacyPolicyURL": "https://o-matic.io",
+    "termsOfServiceURL": "https://o-matic.io",
+    "defaultPrompt": [
+      "Jo, read this draft.",
+      "Give me a quick impression of this opening.",
+      "Help me develop the voice in this piece."
+    ],
+    "brandColor": "#2563EB"
+  },
+  "release": {
+    "channel": "stable",
+    "tags": [
+      "stable"
+    ],
+    "latest": true
+  }
+}

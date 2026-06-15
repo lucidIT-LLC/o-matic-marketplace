@@ -1,0 +1,49 @@
+{
+  "name": "rimmer",
+  "version": "2.1.0",
+  "description": "Evidence-first evaluator for O-Matic skills, agents, factory workflows, and plugin releases.",
+  "author": {
+    "name": "James Walker / lucidIT-LLC",
+    "url": "https://o-matic.io"
+  },
+  "homepage": "https://o-matic.io",
+  "repository": "https://github.com/lucidIT-LLC/o-matic-consulting-pack",
+  "license": "MIT",
+  "keywords": [
+    "eval",
+    "evidence",
+    "quality",
+    "factory-2",
+    "skills",
+    "agents",
+    "release-gate"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Rimmer",
+    "shortDescription": "Evaluate O-Matic skills, agents, workflows, and package readiness.",
+    "longDescription": "Rimmer is an evidence-first evaluator for O-Matic work. He collects evidence, sterilizes data, scores behavior against standards, and produces release or publish-readiness findings.",
+    "developerName": "lucidIT-LLC",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Interactive"
+    ],
+    "websiteURL": "https://o-matic.io",
+    "privacyPolicyURL": "https://o-matic.io",
+    "termsOfServiceURL": "https://o-matic.io",
+    "defaultPrompt": [
+      "Rimmer, evaluate this skill file.",
+      "Rimmer, run a Factory 2.0 alignment eval.",
+      "Rimmer, collect evidence for this agent."
+    ],
+    "brandColor": "#F5B82E"
+  },
+  "release": {
+    "channel": "stable",
+    "tags": [
+      "stable"
+    ],
+    "latest": true
+  }
+}

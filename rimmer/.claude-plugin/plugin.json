@@ -1,0 +1,24 @@
+{
+  "name": "rimmer",
+  "version": "2.1.0",
+  "description": "Evidence-first evaluator for O-Matic skills, agents, factory workflows, and plugin releases.",
+  "author": {
+    "name": "James Walker / LucidIT"
+  },
+  "keywords": [
+    "eval",
+    "evidence",
+    "quality",
+    "factory-2",
+    "skills",
+    "agents",
+    "release-gate"
+  ],
+  "release": {
+    "channel": "stable",
+    "tags": [
+      "stable"
+    ],
+    "latest": true
+  }
+}
