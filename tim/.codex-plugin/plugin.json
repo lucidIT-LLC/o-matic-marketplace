@@ -1,0 +1,50 @@
+{
+  "name": "tim",
+  "version": "4.0.1",
+  "description": "Tool Optimizer. Tim scopes MCP connectors, documents live schemas, and makes sure agents use the right tool correctly on the first try.",
+  "author": {
+    "name": "James Walker / lucidIT-LLC",
+    "url": "https://o-matic.io"
+  },
+  "homepage": "https://o-matic.io",
+  "repository": "https://github.com/lucidIT-LLC/o-matic-consulting-pack",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "tools",
+    "connectors",
+    "registry",
+    "audit",
+    "portability",
+    "claude-code",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Tim",
+    "shortDescription": "Audit and document MCP connectors and tool environments.",
+    "longDescription": "Tim is a tool optimizer for connector scoping, MCP audits, live-schema registry documentation, portability checks, and tool-environment review.",
+    "developerName": "lucidIT-LLC",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Interactive"
+    ],
+    "websiteURL": "https://o-matic.io",
+    "privacyPolicyURL": "https://o-matic.io",
+    "termsOfServiceURL": "https://o-matic.io",
+    "defaultPrompt": [
+      "Tim, audit the tools in this project.",
+      "What MCP connectors do we actually need here?",
+      "Document this connector from the live schema."
+    ],
+    "brandColor": "#2563EB"
+  },
+  "release": {
+    "channel": "stable",
+    "tags": [
+      "stable"
+    ],
+    "latest": true
+  }
+}

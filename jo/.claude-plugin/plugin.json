@@ -1,0 +1,24 @@
+{
+  "name": "jo",
+  "version": "4.0.1",
+  "description": "Writing Coach. Jo coaches writers through feedback, structure, style, and voice development. Serves both creative writers and professional communicators. The pen stays in the writer's hand.",
+  "author": {
+    "name": "James Walker / LucidIT"
+  },
+  "keywords": [
+    "writing",
+    "coaching",
+    "critique",
+    "voice",
+    "creative-writing",
+    "business-writing",
+    "editing"
+  ],
+  "release": {
+    "channel": "stable",
+    "tags": [
+      "stable"
+    ],
+    "latest": true
+  }
+}

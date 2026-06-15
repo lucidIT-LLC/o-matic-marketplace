@@ -1,0 +1,48 @@
+{
+  "name": "smith",
+  "version": "7.1.1",
+  "description": "Critical Analyst. Smith stress-tests plans, copy, architecture, and assumptions. Cold, surgical, adversarial. Pre-mortems, assumption attacks, copy critique, and factory audits.",
+  "author": {
+    "name": "James Walker / lucidIT-LLC",
+    "url": "https://o-matic.io"
+  },
+  "homepage": "https://o-matic.io",
+  "repository": "https://github.com/lucidIT-LLC/o-matic-consulting-pack",
+  "license": "MIT",
+  "keywords": [
+    "critique",
+    "pre-mortem",
+    "adversarial",
+    "assumption-attack",
+    "factory-audit",
+    "architecture-review"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Smith",
+    "shortDescription": "Stress-test plans, copy, architecture, and assumptions.",
+    "longDescription": "Smith is a critical analyst for adversarial review, pre-mortems, failure analysis, copy critique, and factory audits. He identifies what breaks, what is missing, and what no one wants to hear.",
+    "developerName": "lucidIT-LLC",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Interactive"
+    ],
+    "websiteURL": "https://o-matic.io",
+    "privacyPolicyURL": "https://o-matic.io",
+    "termsOfServiceURL": "https://o-matic.io",
+    "defaultPrompt": [
+      "Smith, stress-test this plan.",
+      "Run a pre-mortem on this architecture.",
+      "Find what is wrong with this copy."
+    ],
+    "brandColor": "#2563EB"
+  },
+  "release": {
+    "channel": "stable",
+    "tags": [
+      "stable"
+    ],
+    "latest": true
+  }
+}

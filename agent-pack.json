@@ -1,0 +1,197 @@
+{
+  "schema": "lucidit-agent-pack-v1",
+  "name": "o-matic-consulting-pack",
+  "display_name": "O-Matic Consulting Pack",
+  "owner": {
+    "name": "lucidIT-LLC",
+    "url": "https://github.com/lucidIT-LLC"
+  },
+  "homepage": "https://o-matic.io",
+  "repository": "https://github.com/lucidIT-LLC/o-matic-consulting-pack",
+  "license": "MIT",
+  "description": "Host-neutral expert AI skills for critique, writing coaching, tool optimization, and evaluation.",
+  "canonical_format": {
+    "type": "markdown_skill",
+    "entry_file": "SKILL.md",
+    "frontmatter": "yaml",
+    "body": "markdown_system_prompt",
+    "contract": "The SKILL.md body is the canonical prompt contract. Host adapters must not fork behavior, voice, lane discipline, or task contracts.",
+    "helper_scripts": {
+      "print_system_prompt": "scripts/print-system-prompt.mjs",
+      "build_ollama_modelfile": "scripts/build-ollama-modelfile.mjs",
+      "sync_bundled_skills": "scripts/sync-bundled-skills.mjs"
+    }
+  },
+  "adapters": {
+    "claude": {
+      "marketplace": ".claude-plugin/marketplace.json",
+      "plugin_manifest": ".claude-plugin/plugin.json",
+      "notes": "Claude marketplace/plugin metadata. Skills remain Markdown."
+    },
+    "codex": {
+      "marketplace": ".agents/plugins/marketplace.json",
+      "plugin_manifest": ".codex-plugin/plugin.json",
+      "notes": "Codex plugin metadata plus skills/ directory. The root .agents/skills directory is a copy-friendly adapter for project-local Codex use."
+    },
+    "google": {
+      "type": "system_instruction",
+      "notes": "Use the selected SKILL.md body as the model system instruction in Gemini/Google AI Studio/Gems. Preserve trigger, voice, lane, and output-contract sections. scripts/print-system-prompt.mjs emits the canonical prompt."
+    },
+    "ollama": {
+      "type": "modelfile_system_prompt",
+      "notes": "Build a Modelfile by placing the selected SKILL.md body in the SYSTEM block. Choose the base model separately per deployment. scripts/build-ollama-modelfile.mjs emits a ready Modelfile."
+    },
+    "generic": {
+      "type": "system_prompt",
+      "notes": "For any chat runtime, pass the selected SKILL.md body as the system/developer instruction and supply the user's task as the first user message."
+    }
+  },
+  "agents": [
+    {
+      "id": "smith",
+      "display_name": "Smith",
+      "role": "Critical Analyst",
+      "version": "7.1.1",
+      "signature": 9,
+      "canonical_skill": "smith/skills/smith/SKILL.md",
+      "codex_skill": ".agents/skills/smith/SKILL.md",
+      "claude_plugin": "smith/.claude-plugin/plugin.json",
+      "codex_plugin": "smith/.codex-plugin/plugin.json",
+      "triggers": [
+        "Smith",
+        "critique this",
+        "stress-test",
+        "review",
+        "pre-mortem",
+        "factory audit",
+        "find what's wrong"
+      ],
+      "modes": [
+        "critique",
+        "pre_mortem",
+        "factory_audit",
+        "assumption_attack",
+        "copy_critique",
+        "architecture_review"
+      ],
+      "release": {
+        "channel": "stable",
+        "tags": [
+          "stable"
+        ],
+        "latest": true
+      }
+    },
+    {
+      "id": "jo",
+      "display_name": "Jo",
+      "role": "Writing Coach",
+      "version": "4.0.1",
+      "signature": 4,
+      "canonical_skill": "jo/skills/jo/SKILL.md",
+      "codex_skill": ".agents/skills/jo/SKILL.md",
+      "claude_plugin": "jo/.claude-plugin/plugin.json",
+      "codex_plugin": "jo/.codex-plugin/plugin.json",
+      "triggers": [
+        "Jo",
+        "read this",
+        "critique this",
+        "writing feedback",
+        "coaching",
+        "help with my writing"
+      ],
+      "modes": [
+        "deep_read",
+        "quick_read",
+        "collection_analysis",
+        "coaching",
+        "business_review",
+        "voice_development"
+      ],
+      "release": {
+        "channel": "stable",
+        "tags": [
+          "stable"
+        ],
+        "latest": true
+      }
+    },
+    {
+      "id": "tim",
+      "display_name": "Tim",
+      "role": "Tool Optimizer",
+      "version": "4.0.1",
+      "signature": 6,
+      "canonical_skill": "tim/skills/tim/SKILL.md",
+      "codex_skill": ".agents/skills/tim/SKILL.md",
+      "claude_plugin": "tim/.claude-plugin/plugin.json",
+      "codex_plugin": "tim/.codex-plugin/plugin.json",
+      "triggers": [
+        "Tim",
+        "optimize tools",
+        "audit MCPs",
+        "what tools do we have",
+        "set up my tools",
+        "tool training"
+      ],
+      "modes": [
+        "full_audit",
+        "scope_connectors",
+        "document_connector",
+        "verify_registries",
+        "recommendations"
+      ],
+      "release": {
+        "channel": "stable",
+        "tags": [
+          "stable"
+        ],
+        "latest": true
+      }
+    },
+    {
+      "id": "rimmer",
+      "display_name": "Rimmer",
+      "role": "Evaluator",
+      "version": "2.1.0",
+      "signature": 3,
+      "canonical_skill": "rimmer/skills/rimmer/SKILL.md",
+      "codex_skill": ".agents/skills/rimmer/SKILL.md",
+      "claude_plugin": "rimmer/.claude-plugin/plugin.json",
+      "codex_plugin": "rimmer/.codex-plugin/plugin.json",
+      "triggers": [
+        "Rimmer",
+        "evaluate this",
+        "run an eval",
+        "score this agent",
+        "audit this skill",
+        "collect evidence",
+        "publish-readiness eval",
+        "factory eval"
+      ],
+      "modes": [
+        "quick_eval",
+        "full_eval",
+        "release_gate",
+        "evidence_bundle",
+        "factory_alignment",
+        "correction_review"
+      ],
+      "release": {
+        "channel": "stable",
+        "tags": [
+          "stable"
+        ],
+        "latest": true
+      }
+    }
+  ],
+  "release": {
+    "channel": "stable",
+    "tags": [
+      "stable"
+    ],
+    "latest": true
+  },
+  "version": "1.1.0"
+}
