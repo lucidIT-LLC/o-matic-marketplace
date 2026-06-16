@@ -1,0 +1,42 @@
+{
+  "mcp_servers": {
+    "o-matic-wordpress-connector": {
+      "command": "node",
+      "args": [
+        "${PLUGIN_ROOT}/server/index.mjs"
+      ],
+      "env": {
+        "OMATIC_PROJECT_ROOT": "${CODEX_WORKSPACE}",
+        "OMATIC_WORDPRESS_FACTORY_CONFIG": "${OMATIC_WORDPRESS_FACTORY_CONFIG}",
+        "OMATIC_WORDPRESS_FACTORY_PROFILE": "${OMATIC_WORDPRESS_FACTORY_PROFILE}",
+        "OMATIC_WP_URL": "${OMATIC_WP_URL}",
+        "OMATIC_WP_USERNAME": "${OMATIC_WP_USERNAME}",
+        "OMATIC_WP_APP_PASSWORD": "${OMATIC_WP_APP_PASSWORD}",
+        "OMATIC_WP_MCP_PATH": "${OMATIC_WP_MCP_PATH}",
+        "OMATIC_WP_REST_API_ROOT": "${OMATIC_WP_REST_API_ROOT}",
+        "OMATIC_WP_TIMEOUT_MS": "${OMATIC_WP_TIMEOUT_MS}",
+        "MCP_PROTOCOL_VERSION": "${MCP_PROTOCOL_VERSION}"
+      },
+      "cwd": "${PLUGIN_ROOT}"
+    },
+    "o-matic-elementor-connector": {
+      "command": "node",
+      "args": [
+        "${PLUGIN_ROOT}/server/elementor.mjs"
+      ],
+      "env": {
+        "OMATIC_PROJECT_ROOT": "${CODEX_WORKSPACE}",
+        "OMATIC_ELEMENTOR_FACTORY_CONFIG": "${OMATIC_ELEMENTOR_FACTORY_CONFIG}",
+        "OMATIC_ELEMENTOR_FACTORY_PROFILE": "${OMATIC_ELEMENTOR_FACTORY_PROFILE}",
+        "OMATIC_ELEMENTOR_URL": "${OMATIC_ELEMENTOR_URL}",
+        "OMATIC_ELEMENTOR_USERNAME": "${OMATIC_ELEMENTOR_USERNAME}",
+        "OMATIC_ELEMENTOR_APP_PASSWORD": "${OMATIC_ELEMENTOR_APP_PASSWORD}",
+        "OMATIC_ELEMENTOR_MCP_PATH": "${OMATIC_ELEMENTOR_MCP_PATH}",
+        "OMATIC_ELEMENTOR_REST_API_ROOT": "${OMATIC_ELEMENTOR_REST_API_ROOT}",
+        "OMATIC_ELEMENTOR_TIMEOUT_MS": "${OMATIC_ELEMENTOR_TIMEOUT_MS}",
+        "MCP_PROTOCOL_VERSION": "${MCP_PROTOCOL_VERSION}"
+      },
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

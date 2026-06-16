@@ -1,0 +1,139 @@
+{
+  "schema": "lucidit-agent-pack-v1",
+  "name": "omatic-server-connection",
+  "version": "2.1.4",
+  "display_name": "O-Matic Server Connection",
+  "owner": {
+    "name": "lucidIT-LLC",
+    "url": "https://github.com/lucidIT-LLC"
+  },
+  "homepage": "https://o-matic.io",
+  "repository": "https://github.com/lucidIT-LLC/o-matic-server-connection",
+  "license": "MIT",
+  "description": "Host-aware MCP connection plugin for O-Matic factories with bundled Probot, Fred, and Data skills.",
+  "canonical_format": {
+    "type": "mcp_plugin_with_markdown_skills",
+    "mcp_server": "server/index.js",
+    "codex_mcp_manifest": ".mcp.json",
+    "skill_contract": "Markdown SKILL.md",
+    "contract": "The MCP server is the canonical tool surface for factory DB operations. Bundled SKILL.md files are canonical prompt contracts for host-specific behavior and must not fork per platform.",
+    "helper_scripts": {
+      "print_system_prompt": "scripts/print-system-prompt.mjs",
+      "build_ollama_modelfile": "scripts/build-ollama-modelfile.mjs",
+      "sync_bundled_skills": "scripts/sync-bundled-skills.mjs",
+      "smoke_codex_plugin": "scripts/smoke-codex-plugin.mjs"
+    }
+  },
+  "compatibility": {
+    "mcp_hosts": {
+      "status": "full",
+      "hosts": [
+        "codex",
+        "claude-code",
+        "cowork-with-mcp-config"
+      ],
+      "notes": "Full operation requires an MCP-capable host that can launch server/index.js over stdio and provide a project .omatic/factory.json or equivalent connection config."
+    },
+    "prompt_only_hosts": {
+      "status": "limited",
+      "hosts": [
+        "google-gemini",
+        "ollama",
+        "generic-chat"
+      ],
+      "notes": "Prompt-only hosts can load bundled skills as behavior instructions, but cannot perform factory DB operations unless connected through an external MCP bridge or a separate tool adapter."
+    }
+  },
+  "adapters": {
+    "claude": {
+      "plugin_manifest": ".claude-plugin/plugin.json",
+      "notes": "Claude Code plugin manifest starts the MCP server and loads bundled skills."
+    },
+    "codex": {
+      "plugin_manifest": ".codex-plugin/plugin.json",
+      "mcp_manifest": ".mcp.json",
+      "notes": "Codex plugin manifest loads skills and .mcp.json starts the MCP server. The bundled .mcp.json uses mcpServers; installed plugin policy is controlled separately under config.toml plugins.<id>.mcp_servers."
+    },
+    "cowork": {
+      "type": "mcp_desktop_config",
+      "notes": "Use the same server/index.js with explicit factory_json_path or connection env vars. Cowork does not consume Codex/Claude skill packaging directly."
+    },
+    "google": {
+      "type": "system_instruction",
+      "notes": "Use a bundled SKILL.md body as the system instruction only for context/planning behavior. No DB tools are available without an MCP bridge."
+    },
+    "ollama": {
+      "type": "modelfile_system_prompt",
+      "notes": "Build a Modelfile from a bundled SKILL.md for local prompt behavior. No DB tools are available unless the local app wraps Ollama with MCP/tool calls."
+    },
+    "generic": {
+      "type": "system_prompt",
+      "notes": "Load the selected SKILL.md as a system/developer instruction. Treat all factory DB actions as unavailable unless the runtime provides matching tools."
+    }
+  },
+  "skills": [
+    {
+      "id": "omatic-server-connection",
+      "display_name": "O-Matic Server Connection",
+      "canonical_skill": "skills/omatic-server-connection/SKILL.md",
+      "mode": "plugin operating guide",
+      "version": "2.1.4",
+      "release": {
+        "channel": "stable",
+        "tags": [
+          "stable"
+        ],
+        "latest": true
+      }
+    },
+    {
+      "id": "probot",
+      "display_name": "Probot",
+      "canonical_skill": "skills/orch-o-matic-probot/SKILL.md",
+      "mode": "factory orchestrator",
+      "version": "14.1.0",
+      "release": {
+        "channel": "stable",
+        "tags": [
+          "stable"
+        ],
+        "latest": true
+      }
+    },
+    {
+      "id": "fred",
+      "display_name": "Fred",
+      "canonical_skill": "skills/find-o-matic-fred/SKILL.md",
+      "mode": "storage and connection CRUD",
+      "version": "9.1.0",
+      "release": {
+        "channel": "stable",
+        "tags": [
+          "stable"
+        ],
+        "latest": true
+      }
+    },
+    {
+      "id": "data",
+      "display_name": "Data",
+      "canonical_skill": "skills/data-o-matic-data/SKILL.md",
+      "mode": "data analysis and factory DBA",
+      "version": "5.0.0",
+      "release": {
+        "channel": "stable",
+        "tags": [
+          "stable"
+        ],
+        "latest": true
+      }
+    }
+  ],
+  "release": {
+    "channel": "stable",
+    "tags": [
+      "stable"
+    ],
+    "latest": true
+  }
+}

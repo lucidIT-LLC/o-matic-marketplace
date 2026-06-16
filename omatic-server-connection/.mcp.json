@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "omatic-server-connection": {
+      "command": "node",
+      "args": [
+        "${PLUGIN_ROOT}/server/index.js"
+      ],
+      "env": {
+        "OMATIC_PLATFORM": "codex",
+        "OMATIC_PROJECT_ROOT": "${CODEX_WORKSPACE}",
+        "OMATIC_FACTORY_JSON_PATH": "${CODEX_WORKSPACE}/.omatic/factory.json"
+      }
+    }
+  }
+}

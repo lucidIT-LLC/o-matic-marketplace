@@ -1,0 +1,49 @@
+{
+  "name": "omatic-server-connection",
+  "version": "2.1.4",
+  "description": "O-Matic Server connection — the MCP plugin that connects OpenAI Codex to an O-Matic Server and ships Probot (orchestrator), Fred (storage + connection CRUD), and Data (analyst + DBA) skills. Connects to the factory brain; does not bundle a database.",
+  "author": {
+    "name": "James Walker",
+    "url": "https://o-matic.io"
+  },
+  "homepage": "https://o-matic.io",
+  "repository": "https://github.com/lucidIT-LLC/o-matic-server-connection",
+  "license": "MIT",
+  "keywords": [
+    "omatic",
+    "factory",
+    "connection",
+    "mcp",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "O-Matic Server Connection",
+    "shortDescription": "Connect Codex to an O-Matic factory brain.",
+    "longDescription": "The O-Matic Server MCP connection layer for OpenAI Codex. It resolves a project-bound factory, reports startup and connector health, searches factory memory, manages task and decision records, and exposes guarded SQL against the connected PostgreSQL + pgvector factory brain. The database itself is the separate o-matic-server image — this plugin connects to it, it does not bundle it.",
+    "developerName": "O-Matic AI Research Lab",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://o-matic.io",
+    "privacyPolicyURL": "https://o-matic.io",
+    "termsOfServiceURL": "https://o-matic.io",
+    "defaultPrompt": [
+      "Start the factory.",
+      "Run a factory health check.",
+      "Explain factory embedding status."
+    ],
+    "brandColor": "#2563EB"
+  },
+  "release": {
+    "channel": "stable",
+    "tags": [
+      "stable"
+    ],
+    "latest": true
+  }
+}
