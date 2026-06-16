@@ -1,0 +1,224 @@
+<svg width="100%" height="100%" viewBox="0 0 1024 1536" version="1.1" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">O-Matic Robot Samples Vector Sheet</title>
+  <desc id="desc">Editable vector recreation of the O-Matic robot sample sheet for Affinity, including one full-body mascot and three smaller expression/gesture heads.</desc>
+  <defs>
+    <style>
+      .outline{stroke:#050606;stroke-width:8;stroke-linecap:round;stroke-linejoin:round}
+      .outline-lg{stroke:#050606;stroke-width:10;stroke-linecap:round;stroke-linejoin:round}
+      .outline-sm{stroke:#050606;stroke-width:6;stroke-linecap:round;stroke-linejoin:round}
+      .teal{fill:url(#tealGloss)}
+      .teal-flat{fill:#07848d}
+      .teal-dark{fill:#064f55}
+      .gold{fill:url(#goldGloss)}
+      .gold-flat{fill:#ffc928}
+      .cream{fill:#fff2cb}
+      .black{fill:#050606}
+      .joint{fill:#1f3030}
+      .shadow{fill:#e8ddc7}
+      .none{fill:none}
+      .shine{fill:none;stroke:#fff5d5;stroke-width:7;stroke-linecap:round}
+      .gold-line{fill:none;stroke:#ffc928;stroke-width:8;stroke-linecap:round}
+    </style>
+    <radialGradient id="tealGloss" cx="28%" cy="18%" r="88%">
+      <stop offset="0" stop-color="#0aa1aa"/>
+      <stop offset="0.55" stop-color="#087f88"/>
+      <stop offset="1" stop-color="#045c64"/>
+    </radialGradient>
+    <radialGradient id="goldGloss" cx="30%" cy="20%" r="82%">
+      <stop offset="0" stop-color="#ffe477"/>
+      <stop offset="0.52" stop-color="#ffc928"/>
+      <stop offset="1" stop-color="#e4a900"/>
+    </radialGradient>
+  </defs>
+
+  <ellipse class="shadow" cx="500" cy="1086" rx="265" ry="20" opacity=".65"/>
+
+  <g id="full-body-robot">
+    <g id="antenna">
+      <path class="teal-dark outline" d="M365 162l-14-84 21-4 18 84z"/>
+      <circle class="gold outline" cx="362" cy="97" r="27"/>
+      <path class="shine" d="M365 83c7 2 11 6 13 12"/>
+      <path class="gold outline" d="M344 158c22-13 56-12 74 5l5 35-90 4z"/>
+    </g>
+
+    <g id="head">
+      <path class="teal outline-lg" d="M238 302c1-75 60-120 132-134 81-16 228-18 285-5 45 10 60 42 71 95 18 87-2 194-49 217-57 29-332 38-394 15-49-18-57-114-45-188z"/>
+      <path class="teal-dark outline" d="M240 315c17-42 51-64 91-75 61-18 218-24 287-13 42 7 58 31 65 66 12 59 0 132-39 151-50 24-232 37-306 23-53-10-72-56-66-119 1-13 3-24 7-34"/>
+      <path class="none outline-sm" d="M323 295c52-42 253-60 333-43"/>
+      <circle class="cream outline" cx="404" cy="354" r="59"/>
+      <circle class="cream outline" cx="593" cy="328" r="55"/>
+      <circle class="black" cx="407" cy="354" r="30"/>
+      <circle class="black" cx="590" cy="328" r="29"/>
+      <circle fill="#fff" cx="415" cy="341" r="10"/>
+      <circle fill="#fff" cx="599" cy="315" r="10"/>
+      <path class="none outline" d="M459 411c25 27 62 25 83-11"/>
+      <path class="shine" d="M562 175c27-1 52 4 63 13"/>
+      <path class="gold-line" d="M326 229l10-8"/>
+      <circle class="gold-flat" cx="313" cy="253" r="7"/>
+      <circle class="gold-flat" cx="305" cy="280" r="7"/>
+    </g>
+
+    <g id="ears">
+      <g id="left-ear">
+        <ellipse class="teal outline" cx="253" cy="384" rx="45" ry="72" transform="rotate(-7 253 384)"/>
+        <ellipse class="gold outline" cx="242" cy="389" rx="29" ry="61" transform="rotate(-7 242 389)"/>
+        <ellipse class="teal-flat outline" cx="232" cy="390" rx="25" ry="47" transform="rotate(-7 232 390)"/>
+        <path class="none outline" d="M224 391l-18 3"/>
+      </g>
+      <g id="right-ear">
+        <ellipse class="teal outline" cx="694" cy="353" rx="30" ry="53"/>
+        <path class="gold outline" d="M679 302c19 8 30 30 29 56 0 28-12 51-31 58z"/>
+      </g>
+    </g>
+
+    <g id="neck">
+      <path class="joint outline" d="M444 494h84l2 47c-25 16-62 16-86 0z"/>
+      <path class="none outline-sm" d="M445 519c25 8 58 8 84 0"/>
+    </g>
+
+    <g id="torso">
+      <path class="teal outline-lg" d="M363 537c39-21 176-24 231 1 54 24 62 155 32 198-26 37-210 42-257 9-31-22-48-184-6-208z"/>
+      <path class="gold outline" d="M371 735c63 24 201 22 246-3l-8 32c-52 26-181 25-228 0z"/>
+      <circle class="gold outline" cx="510" cy="658" r="66"/>
+      <circle class="teal outline" cx="510" cy="658" r="35"/>
+      <circle fill="#fff" cx="512" cy="593" r="13"/>
+      <circle class="gold-flat" cx="416" cy="651" r="10"/>
+      <circle class="gold-flat" cx="601" cy="641" r="9"/>
+    </g>
+
+    <g id="left-arm">
+      <path class="gold outline" d="M293 534c36-18 68 4 74 37 3 17-13 48-30 59-24 1-50-13-60-39-7-21 0-45 16-57z"/>
+      <path class="joint outline" d="M281 595c20 4 40 16 55 34l-16 38c-22-15-44-26-68-31z"/>
+      <path class="teal outline" d="M252 623c29 6 50 19 68 38l-32 92c-28 11-72-1-88-32 0-37 17-77 52-98z"/>
+      <path class="joint outline" d="M201 685c31-4 56 7 75 34l-14 31c-22-16-42-23-65-20z"/>
+      <path class="teal outline" d="M205 728c37-2 63 12 79 40l-6 72c-24 10-62 4-75-18-10-28-8-69 2-94z"/>
+      <path class="gold outline" d="M207 808c24-20 58-20 82 0l-4 29c-23 12-62 8-81-9z"/>
+      <path class="teal outline" d="M223 833c17-17 44-9 46 12 3 28-18 43-43 25-19 8-46-7-50-31-3-24 19-43 43-34"/>
+      <path class="shine" d="M268 711v70"/>
+    </g>
+
+    <g id="right-arm">
+      <path class="gold outline" d="M604 532c34-9 61 15 63 51-6 21-20 40-45 48-15-10-27-28-31-50-4-22 1-39 13-49z"/>
+      <path class="joint outline" d="M633 589c23 1 44 11 62 29l-13 40c-26-11-46-24-61-42z"/>
+      <path class="teal outline" d="M672 581c33 7 56 23 73 50l-37 43c-29-3-53-15-72-37z"/>
+      <path class="joint outline" d="M704 628c24 2 45 14 61 35l-21 32c-19-10-38-20-60-29z"/>
+      <path class="teal outline" d="M744 613c29-56 42-75 55-76 17-1 37 28 30 51l-51 112c-28 21-62 11-76-17z"/>
+      <path class="joint outline" d="M762 539c29 17 43 44 39 78l-33 1c-14-22-24-43-31-65z"/>
+      <path class="gold outline" d="M770 524c23 27 54 35 88 25l-1 36c-23 23-70 18-94-10z"/>
+      <g id="waving-hand">
+        <path class="teal outline" d="M798 444c29-8 55 18 50 47l-12 45c-22 11-48 4-61-18z"/>
+        <path class="teal outline" d="M832 408c23 7 34 21 29 43l-17 53c-19 7-39 4-54-11z"/>
+        <path class="teal outline" d="M881 421c23 6 34 23 27 44l-28 48c-18 6-35 1-47-13z"/>
+        <path class="teal outline" d="M928 455c21 11 27 30 14 49l-43 42c-18 2-32-7-40-24z"/>
+        <path class="teal outline" d="M786 507c40-49 91-29 120 41-18 39-71 54-109 21z"/>
+        <circle class="gold outline" cx="834" cy="500" r="31"/>
+      </g>
+    </g>
+
+    <g id="legs">
+      <path class="joint outline" d="M399 766c26 16 57 17 91 4l14 32c-37 21-83 20-111-4z"/>
+      <path class="joint outline" d="M522 768c31 11 60 8 86-10l16 32c-29 26-72 29-111 8z"/>
+      <path class="teal outline" d="M386 793c28-5 55 1 79 17l-20 109c-33 11-66-1-82-28z"/>
+      <path class="teal outline" d="M548 801c23-16 48-21 75-14l24 119c-16 24-54 32-82 18z"/>
+      <circle class="gold outline" cx="381" cy="891" r="27"/>
+      <circle class="gold outline" cx="591" cy="891" r="27"/>
+      <circle class="joint outline-sm" cx="418" cy="899" r="13"/>
+      <circle class="joint outline-sm" cx="553" cy="902" r="13"/>
+      <path class="teal outline" d="M354 917c37-15 75-5 91 28l-2 125c-51 15-123 11-183-1 7-63 35-121 94-152z"/>
+      <path class="teal outline" d="M613 922c-40-14-75-2-87 35l-13 111c51 17 128 13 190 1-10-64-39-119-90-147z"/>
+      <path class="gold outline" d="M260 1064c55 16 127 17 184 3l-2 24c-54 17-132 13-185-5z"/>
+      <path class="gold outline" d="M515 1064c57 16 133 18 188 5v24c-58 15-141 12-190-7z"/>
+      <circle class="gold outline" cx="424" cy="1030" r="19"/>
+      <circle class="gold outline" cx="532" cy="1025" r="19"/>
+      <path class="shine" d="M304 1019c14-9 25-11 32-10"/>
+      <path class="shine" d="M627 1012c15 1 28 4 39 10"/>
+    </g>
+  </g>
+
+  <g id="bottom-expression-samples">
+    <g id="sample-head-happy" transform="translate(58 1180) scale(.5)">
+      <path class="teal-dark outline" d="M42 171c-40 6-52 62-18 87 11 8 25 10 40 5"/>
+      <path class="teal outline-lg" d="M65 89c33-36 322-40 363-6 26 22 27 154 5 178-38 42-324 38-369 5-25-18-24-150 1-177z"/>
+      <path class="none outline-sm" d="M118 138c52-30 196-41 276-26"/>
+      <circle class="cream outline" cx="175" cy="181" r="49"/>
+      <circle class="cream outline" cx="318" cy="173" r="45"/>
+      <circle class="black" cx="177" cy="179" r="25"/>
+      <circle class="black" cx="318" cy="172" r="23"/>
+      <circle fill="#fff" cx="185" cy="166" r="9"/>
+      <circle fill="#fff" cx="326" cy="160" r="8"/>
+      <path class="black outline-sm" d="M209 231c34 26 76 18 102-12 5 43-72 69-102 12z"/>
+      <ellipse class="teal outline" cx="36" cy="183" rx="32" ry="55"/>
+      <ellipse class="gold outline" cx="30" cy="185" rx="20" ry="45"/>
+      <path class="none outline-sm" d="M23 185l-15 2"/>
+      <ellipse class="teal outline" cx="452" cy="175" rx="20" ry="43"/>
+      <path class="gold outline" d="M439 135c15 8 22 23 21 42 0 21-8 38-22 45z"/>
+      <path class="joint outline" d="M209 276h84v38c-21 11-63 11-84 0z"/>
+      <path class="teal-dark outline-sm" d="M238 74l-13-72 19-3 14 71z"/>
+      <circle class="gold outline" cx="234" cy="1" r="24"/>
+      <path class="gold outline" d="M213 72c18-12 51-11 66 3l3 27-73 4z"/>
+      <path class="gold-line" d="M101 131l8-6"/>
+      <circle class="gold-flat" cx="92" cy="147" r="7"/>
+      <circle class="gold-flat" cx="88" cy="169" r="7"/>
+      <path class="shine" d="M326 99c23 1 42 5 52 13"/>
+    </g>
+
+    <g id="sample-head-wink" transform="translate(367 1180) scale(.5)">
+      <path class="teal-dark outline" d="M42 171c-40 6-52 62-18 87 11 8 25 10 40 5"/>
+      <path class="teal outline-lg" d="M65 89c33-36 322-40 363-6 26 22 27 154 5 178-38 42-324 38-369 5-25-18-24-150 1-177z"/>
+      <path class="none outline-sm" d="M118 138c52-30 196-41 276-26"/>
+      <circle class="cream outline" cx="185" cy="181" r="49"/>
+      <circle class="black" cx="187" cy="179" r="25"/>
+      <circle fill="#fff" cx="195" cy="166" r="9"/>
+      <path class="none outline" d="M304 172c18-25 42-22 58 0"/>
+      <path class="none outline" d="M225 228c27 30 70 30 94 0"/>
+      <ellipse class="teal outline" cx="36" cy="183" rx="32" ry="55"/>
+      <ellipse class="gold outline" cx="30" cy="185" rx="20" ry="45"/>
+      <path class="none outline-sm" d="M23 185l-15 2"/>
+      <ellipse class="teal outline" cx="452" cy="175" rx="20" ry="43"/>
+      <path class="gold outline" d="M439 135c15 8 22 23 21 42 0 21-8 38-22 45z"/>
+      <path class="joint outline" d="M209 276h84v38c-21 11-63 11-84 0z"/>
+      <path class="teal-dark outline-sm" d="M238 74l-13-72 19-3 14 71z"/>
+      <circle class="gold outline" cx="234" cy="1" r="24"/>
+      <path class="gold outline" d="M213 72c18-12 51-11 66 3l3 27-73 4z"/>
+      <path class="gold-line" d="M101 131l8-6"/>
+      <circle class="gold-flat" cx="92" cy="147" r="7"/>
+      <circle class="gold-flat" cx="88" cy="169" r="7"/>
+      <path class="shine" d="M326 99c23 1 42 5 52 13"/>
+    </g>
+
+    <g id="sample-head-thumbs-up" transform="translate(681 1180) scale(.5)">
+      <path class="teal-dark outline" d="M42 171c-40 6-52 62-18 87 11 8 25 10 40 5"/>
+      <path class="teal outline-lg" d="M65 89c33-36 322-40 363-6 26 22 27 154 5 178-38 42-324 38-369 5-25-18-24-150 1-177z"/>
+      <path class="none outline-sm" d="M118 138c52-30 196-41 276-26"/>
+      <circle class="cream outline" cx="176" cy="181" r="48"/>
+      <circle class="cream outline" cx="319" cy="174" r="45"/>
+      <circle class="black" cx="178" cy="179" r="24"/>
+      <circle class="black" cx="319" cy="173" r="23"/>
+      <circle fill="#fff" cx="186" cy="166" r="9"/>
+      <circle fill="#fff" cx="327" cy="161" r="8"/>
+      <path class="none outline" d="M222 226c24 27 61 27 84 0"/>
+      <ellipse class="teal outline" cx="36" cy="183" rx="32" ry="55"/>
+      <ellipse class="gold outline" cx="30" cy="185" rx="20" ry="45"/>
+      <path class="none outline-sm" d="M23 185l-15 2"/>
+      <ellipse class="teal outline" cx="452" cy="175" rx="20" ry="43"/>
+      <path class="gold outline" d="M439 135c15 8 22 23 21 42 0 21-8 38-22 45z"/>
+      <path class="joint outline" d="M209 276h84v38c-21 11-63 11-84 0z"/>
+      <path class="teal-dark outline-sm" d="M238 74l-13-72 19-3 14 71z"/>
+      <circle class="gold outline" cx="234" cy="1" r="24"/>
+      <path class="gold outline" d="M213 72c18-12 51-11 66 3l3 27-73 4z"/>
+      <g id="thumbs-up" transform="translate(402 118)">
+        <path class="gold-line" d="M100 11l6-24"/>
+        <path class="gold-line" d="M127 31l20-18"/>
+        <path class="gold-line" d="M143 67l24-2"/>
+        <path class="gold outline" d="M27 187c-22-18-24-59 1-75l22 5v69z"/>
+        <path class="teal outline" d="M52 84c8-34 48-25 43 8l-6 45c31 3 55 18 62 49-15 36-70 52-112 22-8-29-3-99 13-124z"/>
+        <path class="teal outline" d="M76 71c10-30 48-21 42 14l-6 54"/>
+        <path class="none outline-sm" d="M54 139c19-13 45-10 64 2"/>
+      </g>
+      <path class="gold-line" d="M101 131l8-6"/>
+      <circle class="gold-flat" cx="92" cy="147" r="7"/>
+      <circle class="gold-flat" cx="88" cy="169" r="7"/>
+      <path class="shine" d="M326 99c23 1 42 5 52 13"/>
+    </g>
+  </g>
+</svg>
