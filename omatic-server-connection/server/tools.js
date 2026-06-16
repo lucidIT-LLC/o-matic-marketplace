@@ -615,9 +615,11 @@ function buildToolList(connections) {
         type: "object",
         properties: {
           decision: { type: "string" },
+          category: { type: "string", description: "Decision category (e.g. infra, release, brand). Defaults to 'general' if omitted." },
+          title: { type: "string", description: "Short decision title. Defaults to a truncation of `decision` if omitted." },
           rationale: { type: "string" },
-          owner: { type: "string" },
-          status: { type: "string", default: "accepted" },
+          owner: { type: "string", description: "Decision owner — maps to made_by." },
+          status: { type: "string", default: "accepted", description: "Accepted for compatibility; the decisions table has no status column (ignored)." },
         },
         required: ["decision"],
         additionalProperties: false,
@@ -1395,14 +1397,19 @@ async function handleRecordDecision(connections, args, explicitConnection = null
   const verified = await verifyFactoryContext(connections, explicitConnection);
   if (!verified.ok) return errorResponse(verified.error, verified);
 
+  // decisions NOT NULL columns with no DB default: decision_date, category, title.
+  // tenant_id defaults to 'omatic'. The `owner` input arg maps to made_by. There is no status column.
+  const category = (args.category && String(args.category).trim()) || "general";
+  const title =
+    (args.title && String(args.title).trim()) ||
+    String(args.decision || "").replace(/\s+/g, " ").trim().slice(0, 120) ||
+    "Untitled decision";
   const result = await q(
     connections,
-    // decisions columns: (decision_date NOT NULL, decision, rationale, made_by). tenant_id defaults to 'omatic'.
-    // decision_date has no DB default — must be set. The `owner` input arg maps to made_by. There is no status column.
-    `INSERT INTO decisions (decision_date, decision, rationale, made_by)
-     VALUES (CURRENT_DATE, $1, $2, $3)
+    `INSERT INTO decisions (decision_date, category, title, decision, rationale, made_by)
+     VALUES (CURRENT_DATE, $1, $2, $3, $4, $5)
      RETURNING *`,
-    [args.decision, args.rationale || null, args.owner || null],
+    [category, title, args.decision, args.rationale || null, args.owner || null],
     explicitConnection
   );
   return successResponse({ decision: result.rows[0] || null, pinned_connection: explicitConnection });
