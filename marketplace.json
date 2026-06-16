@@ -109,7 +109,7 @@
     },
     {
       "name": "o-matic-wordpress-factory",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "source": "./o-matic-wordpress-factory",
       "description": "O-Matic WordPress Factory plugin with bundled brand, build, writing, and visual skills plus separate WordPress and Elementor MCP connectors.",
       "author": {

@@ -5,7 +5,7 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 
 const DEFAULT_PROFILE = "default";
-const DEFAULT_PROTOCOL_VERSION = "2025-03-26";
+const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
 const TOOL_CACHE_MS = 10000;
 
 export function createConnectorServer(options) {
