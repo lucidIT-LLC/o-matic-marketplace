@@ -33,10 +33,10 @@ This catalog **hosts** the standalone O-Matic skills directly, and **references*
 | `jo` | here (`./jo`) — canonical | Writing Coach |
 | `tim` | here (`./tim`) | Tool Optimizer |
 | `rimmer` | here (`./rimmer`) | Agent Evaluator |
-| `omatic-server-connection` | ref → `lucidIT-LLC/o-matic-server-connection` | MCP server + Probot, Fred, Data |
-| `o-matic-wordpress-factory` | ref → `lucidIT-LLC/o-matic-wordpress-factory` | Brandy, Carver, Monet, Jo + WP/Elementor connectors |
+| `omatic-server-connection` | here (`./omatic-server-connection`) | MCP server + Probot, Fred, Data |
+| `o-matic-wordpress-factory` | here (`./o-matic-wordpress-factory`) | Brandy, Carver, Monet, Jo + WP/Elementor connectors |
 
-The former standalone `o-matic-consulting-pack` marketplace is retired — its plugins (smith, jo, tim, rimmer) now live here, under the one O-Matic marketplace.
+**Self-contained:** every plugin lives in this one repo (no external git-subdir references). The former standalone `o-matic-consulting-pack`, `o-matic-server-connection`, and `o-matic-wordpress-factory` repos are retired — all of it now lives here, under the one O-Matic marketplace. (The Docker server image is distributed separately at `lucidIT-LLC/o-matic-server-container` — it's infra, not a plugin.)
 
 ## Shared skills
 

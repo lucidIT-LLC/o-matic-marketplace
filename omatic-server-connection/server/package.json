@@ -1,0 +1,20 @@
+{
+  "name": "omatic-server-connection",
+  "version": "2.1.4",
+  "description": "O-Matic Server Connection — PostgreSQL MCP server for O-Matic factory projects. One install serves many factories via per-project .omatic/factory.json. Ships Probot, Fred, and Data skills.",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "smoke:codex-plugin": "node ../scripts/smoke-codex-plugin.mjs"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "pg": "^8.11.3"
+  },
+  "author": "James Walker / O-Matic AI Research Lab",
+  "license": "MIT",
+  "private": true
+}

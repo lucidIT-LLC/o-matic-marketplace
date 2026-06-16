@@ -12,11 +12,7 @@
     {
       "name": "omatic-server-connection",
       "version": "2.1.4",
-      "source": {
-        "source": "git-subdir",
-        "url": "https://github.com/lucidIT-LLC/o-matic-server-connection.git",
-        "path": "plugins/omatic-server-connection"
-      },
+      "source": "./omatic-server-connection",
       "description": "O-Matic Server connection \u2014 the MCP plugin that connects Claude Code and Codex to an O-Matic Server and ships Probot (orchestrator), Fred (storage + connection CRUD), and Data (analyst + DBA) skills. Connects to the factory brain; does not bundle a database.",
       "author": {
         "name": "James Walker",
@@ -114,11 +110,7 @@
     {
       "name": "o-matic-wordpress-factory",
       "version": "1.0.0",
-      "source": {
-        "source": "git-subdir",
-        "url": "https://github.com/lucidIT-LLC/o-matic-wordpress-factory.git",
-        "path": "plugins/o-matic-wordpress-factory"
-      },
+      "source": "./o-matic-wordpress-factory",
       "description": "O-Matic WordPress Factory plugin with bundled brand, build, writing, and visual skills plus separate WordPress and Elementor MCP connectors.",
       "author": {
         "name": "James Walker",
