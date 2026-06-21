@@ -37,6 +37,7 @@ pgvector-backed retrieval with lifecycle governance, auditable operating context
 | E | O-Matic Elementor cross-platform plugin | Carver | task #112, dec #77/#78 | plugin build | spec ready → build |
 | F | Fred file intake without Docling | Fred | task #111 | infra | spec → design |
 | G | Fred L2 Session-Rhythm continuity | Fred | task #110 | infra | spec → design |
+| H | Auto-embedding — Embedder standing service | Carver (build) / Data (health) | rule #314, SOP-019, PK-24/25, task #97/#98 | infra | **agent shipped (2.1.6)** → wire as standing service |
 
 ---
 
@@ -119,6 +120,38 @@ read/convert. **Owner:** Fred. **Acceptance:** intake succeeds with Docling abse
 Cross-session continuity for the workspace manager (resume point, custody handoff).
 **Owner:** Fred. **Acceptance:** a cold start recovers the last resume point without operator re-priming.
 
+## H — Auto-embedding: Embedder as a standing service
+
+The Embedder **agent already exists and shipped** in `omatic-server-connection` 2.1.6 (commit
+32ed0d7). 3.0 promotes it from a manually-invoked script to an **automatic standing service**
+so the brain stays embedded without an operator running `embed_stale.py` by hand.
+
+Two layers, both already specified:
+
+1. **Embed-on-write (inline, built-in)** — PK-25 contract: the agent embeds inline immediately
+   after every DB write via `urllib.request` → OpenAI `text-embedding-3-small` (1536 dims).
+   No wrapper libs, no saved scripts. UPSERT key `(tenant_id, source_table, source_id)`.
+   DB triggers (`fn_mark_embedding_stale`) mark rows stale **only** — they never auto-embed.
+2. **Embedder background refresh** — rule #314: the canonical background vector-refresh service.
+   Processes admitted **stale/unembedded Tier 1/Tier 2 rows only**. Canonical sweep:
+   `_omatic/scripts/embed_stale.py` (SOP-014, rule #249).
+
+**Hard boundary (SOP-019):** Embedder owns vector refresh **only**. It never decides truth,
+admission, promotion, retirement, or contradiction resolution. **Data** owns embedding/retrieval
+health, stale-vector audits, and recall/precision evals. This boundary is load-bearing — do not
+let the convenience of "auto" creep the Embedder into deciding what is true.
+
+**3.0 build-in goal:** run the sweep automatically (scheduled/triggered standing service), not
+on-demand; surface embedding-health counts through startup workstream **C** (normal/audit modes);
+keyless = **degrade to FTS, never hard-fail**; per-factory **BYO OpenAI key**, env-first then DB
+fallback (task #97), never a shared O-Matic key baked into the image/repo.
+
+**Owner:** Carver (service wiring) + Data (health/evals). Ties to tasks #97 (key onboarding) and
+#98 (query-embedding provider — the other half of the pgvector connector).
+**Acceptance:** stale/unembedded rows get re-embedded with no manual invocation; health stays
+green (0 stale) and is visible at startup; keyless degrades to FTS cleanly; Embedder makes
+**zero** truth/admission decisions in any path.
+
 ---
 
 ## Dependencies
@@ -127,6 +160,9 @@ Cross-session continuity for the workspace manager (resume point, custody handof
 - **C** depends on the startup-runner contract; independent of the plugin builds.
 - **D** and **E** share the host MCP gateway / proxy adapter — **build E's adapter once, D consumes it.** Sequence E-adapter → D.
 - **F, G** are Fred-internal; independent of the plugin builds.
+- **H** is mostly *already built* (Embedder shipped 2.1.6). The remaining work is scheduling it as
+  a standing service + key onboarding (#97) + query-embedding provider (#98). It **feeds C**:
+  startup normal/audit modes report embedding-health counts. Do H alongside C.
 
 ## Routing (no hero-ball)
 
@@ -136,6 +172,7 @@ Cross-session continuity for the workspace manager (resume point, custody handof
 | C (startup modes) | Probot (runner) → Smith review | own |
 | D, E (plugins) | **Carver** | spec handoff, Smith gate before release |
 | F, G (Fred infra) | **Fred** | spec handoff |
+| H (auto-embedding) | **Carver** (service wiring) + **Data** (health/evals) | guard the truth/admission boundary (SOP-019) |
 
 Each workstream: spec → build (owner) → **Smith adversarial gate** → merge to `beta` →
 green pass → fast-forward `stable`. Versioned tags only (`vX.Y.Z`, `<plugin>-vX.Y.Z`) —
