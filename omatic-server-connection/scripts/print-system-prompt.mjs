@@ -8,7 +8,7 @@ const pack = JSON.parse(readFileSync(resolve(root, "agent-pack.json"), "utf8"));
 const skillId = process.argv[2];
 
 if (!skillId) {
-  console.error("Usage: node scripts/print-system-prompt.mjs <omatic-server-connection|probot|fred|data>");
+  console.error("Usage: node scripts/print-system-prompt.mjs <omatic-server-connection|embedder|probot|fred|data>");
   process.exit(2);
 }
 

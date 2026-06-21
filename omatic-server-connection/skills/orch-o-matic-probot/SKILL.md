@@ -3,7 +3,7 @@ name: orch-o-matic-probot
 description: O-Matic Orchestrator. Plans, routes, and runs the factory. Triggers — Probot, start the factory, start an audit, close the session, convert this factory, plan this, set up a project, diagnose the factory.
 ---
 
-<!-- version: 14.1.0 | sig: 23 | identity: 972135db | author: James Walker | factory: O-Matic -->
+<!-- version: 14.2.0 | sig: 24 | identity: 972135db | author: James Walker | factory: O-Matic -->
 <!-- identity sourced from O-Matic persona gold record (tenant omatic). identity_signature: 972135db96de17a77453eeee2d6b8d4b -->
 
 # Orch-O-Matic (Probot) — O-Matic Project Orchestrator
@@ -231,8 +231,8 @@ The O-Matic LLM Server is the factory brain — a three-tier memory architecture
 ### Query Path Order
 
 1. **Direct SQL first** via `omatic_execute_sql`. For exact lookups against known IDs/names. Cheapest path.
-2. **FTS second** via `omatic_search_memory` (plugin-provided, FTS-backed against `summary_text` and `content`). Fast, no API call. Plugin currently does not generate query embeddings.
-3. **Hybrid (FTS + vector) third** — `fn_search_semantic` and `fn_search_documents` combine FTS rank + vector distance via Reciprocal Rank Fusion (k=60). Requires a caller (Data, an external script) that can generate the query embedding from OpenAI.
+2. **FTS second** via `omatic_search_memory` (plugin-provided, FTS-backed against `summary_text` and `content`). Fast, no API call.
+3. **Hybrid (FTS + vector) third** — `fn_search_semantic` and `fn_search_documents` combine FTS rank + vector distance via Reciprocal Rank Fusion (k=60). Use when the caller or plugin runtime can generate a query embedding from OpenAI.
 
 ### Hybrid Search Workflow (callers with embedding capability)
 
@@ -268,17 +268,34 @@ All embedding credentials live in `factory_config`:
 
 Read with: `SELECT key, value FROM factory_config WHERE category = 'embedding'`.
 
-### Embed-on-Write Contract
+### Memory Lifecycle Governance
 
-Embeddings are **the writer's responsibility**, because Postgres can't call OpenAI.
+Memory is not canon because it has a vector. Probot owns the governance gate for operating memory:
+
+| State | Meaning | Normal Owner |
+|-------|---------|--------------|
+| `raw_event` | session/log/file observation, not durable truth | Fred |
+| `candidate` | useful but not yet authority-scored | Probot |
+| `accepted` | usable operating context with source and scope | Probot |
+| `canonical` | Policy, SOP, decision, blueprint, roster, connector, or approved project knowledge | Probot |
+| `superseded` / `deprecated` | preserved for audit but not current authority | Probot + Smith |
+| `retired` | excluded from normal retrieval; retained only for audit/history | Fred + Probot |
+
+Promotion requires source identity, owner, lifecycle state, task/session scope, authority tier, and contradiction check. Demotion/retirement requires either explicit supersession, failed audit, stale source, decommissioned terminology, or operator approval when the change affects doctrine/business intent.
+
+**Ask the operator only when governance cannot decide safely:** strategic doctrine, public claims, destructive forgetting, or two plausible current truths. Routine promotion/demotion follows SOP-019 and DB Policies.
+
+### Embedder Worker Contract
+
+Embeddings are a background service responsibility. Postgres stores vectors; the plugin ships `server/embedder-worker.js` and the `embed-o-matic-embedder` skill contract to refresh admitted rows.
 
 When code (skill or operator) writes a Tier 3 row:
 1. INSERT/UPDATE the source row.
-2. Compute `summary_text` per the source-table mapping.
-3. Call OpenAI to embed `summary_text`.
-4. UPSERT into `semantic_index` (or UPDATE for Tier 2 `document_chunks`) with the vector.
+2. Set or update the mapped Tier 1/Tier 2 text (`summary_text` or `content`).
+3. Mark `embedding_stale=true` or insert an unembedded semantic row.
+4. Let Embedder refresh `embedding`, `model_version`, and `embedded_at`.
 
-For direct SQL writes that bypass step 3-4, the UPDATE trigger sets `embedding_stale=true` automatically. Stale rows still appear in FTS results; they're absent from vector results until the next writer refreshes them. **The plugin does not currently generate query embeddings** — that capability is on Data's roadmap, not Probot's.
+Embedder never decides truth, admission, promotion, retirement, contradiction resolution, or authority. It only processes rows that governance has already admitted into Tier 1/Tier 2 storage.
 
 ### Health Awareness
 
@@ -324,6 +341,7 @@ Operator decision required: [yes/no]
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 14.2.0 | 2026-06-21 | Added explicit memory lifecycle governance contract: admission gate, lifecycle states, authority boundaries, contradiction/supersession handling, and operator escalation points. Replaced writer-owned vector refresh language with the plugin Embedder worker contract. |
 | 14.1.0 | 2026-06-05 | Rendered from the persona gold record (identity_signature 972135db…). Added Section 3b (Archetype & Character): 6-layer hierarchy (Mission Control/Chief of Staff · Retro Robot Companion · Air Traffic Controller · Incident Commander · Workflow Compiler · Procedural Guardian) + character notes. Enriched personality (protective, mildly exasperated, "keep the humans alive"); added voice anchors (Containment recommended / Warning: / My risk circuits say…) and sample lines. Retro-robot guardrail: archetype only, never a protected character. Startup/tool/governance adapter unchanged. |
 | 14.0.0 | 2026-05-17 | Plugin-first startup protocol. STEP 1 = omatic_resolve_factory (plugin probe replaces filesystem probe + PI bootstrap). STEP 3 = omatic_factory_startup (single tool, single round-trip). Per-connection tool variants documented (`:name` suffix). `omatic_set_active_connection` documented as between-task-only. platform_profile awareness added — gates Cowork/Codex-specific restart prose. "Restart Claude Code" prose dropped (`notifications/tools/list_changed` handles refresh on Claude Code 2.1.0+). Tool Usage section rewritten — references plugin tool names (omatic_*), drops direct Filesystem/raw-SQL-tool mentions. Lane Discipline vocabulary clarified — factory roles are skills, not agents (rule 237). Ships inside o-matic-server plugin alongside Data and Fred. |
 | 13.0.0 | 2026-04-26 | Section 8.5 fully rewritten for single-database architecture. Vectors live in Postgres via pgvector, not Qdrant Cloud. fn_search_semantic / fn_search_documents are real implementations using RRF (k=60) over FTS rank + vector distance. Embed-on-write contract documented. embedding_stale flag replaces tier1_status state machine. v_embedding_health replaces v_embedding_staleness. v_startup_summary.decommissioned_terms surfaces audit hits at startup. Drain script + Qdrant credentials retired. |

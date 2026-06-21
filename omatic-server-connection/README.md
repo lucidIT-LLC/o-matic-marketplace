@@ -1,12 +1,12 @@
 # O-Matic Server Connection (MCP Plugin + Bundled Skills)
 
-> **What this is:** the plugin that connects Claude Code and Codex to an O-Matic Server, and ships the Probot, Fred, and Data skills.
+> **What this is:** the plugin that connects Claude Code and Codex to an O-Matic Server, and ships the Probot, Fred, Data, and Embedder skills.
 > **What this is NOT:** a database. It bundles no PostgreSQL and no pgvector — it's the wire and the crew, not the brain.
 > The brain it connects to lives in **[o-matic-server](https://github.com/lucidIT-LLC/o-matic-server)**.
 
-The connection layer for an O-Matic factory, packaged for MCP-capable hosts such as Claude Code and OpenAI Codex. Install it once per host and let each factory project route through its own `.omatic/factory.json` to the right O-Matic Server. Ships Probot, Fred, and Data as plugin-bundled skills.
+The connection layer for an O-Matic factory, packaged for MCP-capable hosts such as Claude Code and OpenAI Codex. Install it once per host and let each factory project route through its own `.omatic/factory.json` to the right O-Matic Server. Ships Probot, Fred, Data, and Embedder as plugin-bundled skills.
 
-**Version:** 2.1.5
+**Version:** 2.1.6
 **Author:** James Walker / O-Matic AI Research Lab
 
 ---
@@ -27,6 +27,8 @@ node scripts/print-system-prompt.mjs probot
 node scripts/build-ollama-modelfile.mjs probot llama3.1:8b > Probot.Modelfile
 node scripts/sync-bundled-skills.mjs --dry-run
 node scripts/sync-bundled-skills.mjs
+OMATIC_PROJECT_ROOT=/path/to/factory node server/embedder-worker.js
+OMATIC_PROJECT_ROOT=/path/to/factory node server/embedder-worker.js --watch
 ```
 
 `sync-bundled-skills.mjs` installs missing bundled skills into
@@ -55,11 +57,13 @@ omatic-server-connection/
   .mcp.json            # Codex MCP server config
   skills/
     omatic-server-connection/SKILL.md  # generic plugin operating guide
-    orch-o-matic-probot/SKILL.md   # Probot v14.1 — orchestrator
-    data-o-matic-data/SKILL.md     # Data v5.0 — analyst, architect + factory DBA
-    find-o-matic-fred/SKILL.md     # Fred v9.1 — storage + connection CRUD
+    embed-o-matic-embedder/SKILL.md    # Embedder background worker
+    orch-o-matic-probot/SKILL.md   # Probot v14.2 — orchestrator + memory governance
+    data-o-matic-data/SKILL.md     # Data v5.1 — analyst, architect + lifecycle health
+    find-o-matic-fred/SKILL.md     # Fred v9.2 — storage, provenance + connection CRUD
   server/              # bundled Node MCP server
     index.js
+    embedder-worker.js
     connections.js
     tools.js
     package.json
@@ -175,6 +179,11 @@ Expect `factory_file` pointing at your project's `.omatic/factory.json` and `act
 
 ## Changelog
 
+- **2.1.6** — Governed memory lifecycle + Embedder worker.
+  - Added `server/embedder-worker.js` and the `embed-o-matic-embedder` skill contract. Embedder refreshes vectors for admitted Tier 1/Tier 2 rows only; it does not decide truth, promotion, retirement, contradiction resolution, or authority.
+  - Probot 14.2 defines the memory admission gate, lifecycle states, promotion/demotion triggers, contradiction handling, and operator escalation boundaries.
+  - Fred 9.2 owns provenance, archives, custody, and safe retention; Data 5.1 owns lifecycle health, stale-vector audit, retired/superseded retrieval checks, and benchmark discipline.
+  - Factory blueprint conversion target: adopt SOP-019, lifecycle Policies, Embedder roster/agreement state, and a factory_commons blueprint section before claiming governed operating memory.
 - **2.1.4** — honest startup warm-retrieval probe.
   - `omatic_factory_startup_run` now generates a query embedding for `brain_warm` and runs the **hybrid pgvector** path (`fn_search_semantic($1, $2::vector, ...)`) instead of `NULL::vector` FTS-only. The probe previously reported a green warm result while silently exercising the weak path, so a semantically-relevant brain could read as 0 hits at startup (false assurance).
   - `brain_warm` payload and the `brain_search` session-log event now surface the actual `mode` (`hybrid_pgvector` vs `fts_with_null_vector`) so a green light means the real retrieval path ran. Falls back to FTS-only if no embedding key is configured.

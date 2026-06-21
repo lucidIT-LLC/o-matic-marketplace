@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.6 - 2026-06-21
+
+### Added
+- `server/embedder-worker.js`, a plugin-shipped background worker for admitted
+  stale/unembedded Tier 1 `brain.semantic_index` and Tier 2
+  `brain.document_chunks` rows.
+- Embedder skill contract, making embeddings an operational service over
+  governed memory rather than a truth/admission layer.
+
 ## 2.1.5 — 2026-06-15
 
 ### Fixed

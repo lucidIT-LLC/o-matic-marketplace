@@ -7,7 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const [skillId, baseModel = "llama3.1:8b"] = process.argv.slice(2);
 
 if (!skillId) {
-  console.error("Usage: node scripts/build-ollama-modelfile.mjs <omatic-server-connection|probot|fred|data> [base-model]");
+  console.error("Usage: node scripts/build-ollama-modelfile.mjs <omatic-server-connection|embedder|probot|fred|data> [base-model]");
   process.exit(2);
 }
 

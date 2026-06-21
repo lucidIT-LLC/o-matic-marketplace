@@ -18,7 +18,7 @@ const {
   setNotifyToolsChanged,
 } = require("./tools.js");
 
-const PLUGIN_VERSION = "2.1.5";
+const PLUGIN_VERSION = "2.1.6";
 
 async function main() {
   // A9 — upgrade migration: write factory.json from legacy hardcoded DSN if

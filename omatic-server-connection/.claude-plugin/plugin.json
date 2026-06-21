@@ -1,6 +1,6 @@
 {
   "name": "omatic-server-connection",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "description": "O-Matic Server connection — the MCP plugin that connects Claude Code to an O-Matic Server and ships Probot (orchestrator), Fred (storage + connection CRUD), and Data (analyst + DBA) skills. Connects to the factory brain; does not bundle a database. Replaces the hand-edited omatic-server block in claude_desktop_config.json.",
   "author": {
     "name": "James Walker",

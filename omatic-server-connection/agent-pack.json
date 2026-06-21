@@ -1,7 +1,7 @@
 {
   "schema": "lucidit-agent-pack-v1",
   "name": "omatic-server-connection",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "display_name": "O-Matic Server Connection",
   "owner": {
     "name": "lucidIT-LLC",
@@ -10,7 +10,7 @@
   "homepage": "https://o-matic.io",
   "repository": "https://github.com/lucidIT-LLC/o-matic-server-connection",
   "license": "MIT",
-  "description": "Host-aware MCP connection plugin for O-Matic factories with bundled Probot, Fred, and Data skills.",
+  "description": "Host-aware MCP connection plugin for O-Matic factories with bundled Probot, Fred, Data, and Embedder skills plus a background embedding worker.",
   "canonical_format": {
     "type": "mcp_plugin_with_markdown_skills",
     "mcp_server": "server/index.js",
@@ -77,7 +77,21 @@
       "display_name": "O-Matic Server Connection",
       "canonical_skill": "skills/omatic-server-connection/SKILL.md",
       "mode": "plugin operating guide",
-      "version": "2.1.5",
+      "version": "2.1.6",
+      "release": {
+        "channel": "stable",
+        "tags": [
+          "stable"
+        ],
+        "latest": true
+      }
+    },
+    {
+      "id": "embedder",
+      "display_name": "Embedder",
+      "canonical_skill": "skills/embed-o-matic-embedder/SKILL.md",
+      "mode": "background embedding worker",
+      "version": "1.0.0",
       "release": {
         "channel": "stable",
         "tags": [
@@ -91,7 +105,7 @@
       "display_name": "Probot",
       "canonical_skill": "skills/orch-o-matic-probot/SKILL.md",
       "mode": "factory orchestrator",
-      "version": "14.1.0",
+      "version": "14.2.0",
       "release": {
         "channel": "stable",
         "tags": [
@@ -105,7 +119,7 @@
       "display_name": "Fred",
       "canonical_skill": "skills/find-o-matic-fred/SKILL.md",
       "mode": "storage and connection CRUD",
-      "version": "9.1.0",
+      "version": "9.2.0",
       "release": {
         "channel": "stable",
         "tags": [
@@ -119,7 +133,7 @@
       "display_name": "Data",
       "canonical_skill": "skills/data-o-matic-data/SKILL.md",
       "mode": "data analysis and factory DBA",
-      "version": "5.0.0",
+      "version": "5.1.0",
       "release": {
         "channel": "stable",
         "tags": [
