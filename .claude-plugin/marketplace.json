@@ -1,5 +1,5 @@
 {
-  "name": "o-matic.ai",
+  "name": "o-matic-marketplace",
   "owner": {
     "name": "lucidIT-LLC",
     "email": "lucideye@icloud.com"
@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "omatic-server-connection",
-      "version": "2.1.4",
+      "version": "2.1.5",
       "source": "./omatic-server-connection",
       "description": "O-Matic Server connection \u2014 the MCP plugin that connects Claude Code and Codex to an O-Matic Server and ships Probot (orchestrator), Fred (storage + connection CRUD), and Data (analyst + DBA) skills. Connects to the factory brain; does not bundle a database.",
       "author": {
@@ -109,7 +109,7 @@
     },
     {
       "name": "o-matic-wordpress-factory",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "source": "./o-matic-wordpress-factory",
       "description": "O-Matic WordPress Factory plugin with bundled brand, build, writing, and visual skills plus separate WordPress and Elementor MCP connectors.",
       "author": {

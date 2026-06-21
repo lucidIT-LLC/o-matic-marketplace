@@ -6,7 +6,7 @@
 
 The connection layer for an O-Matic factory, packaged for MCP-capable hosts such as Claude Code and OpenAI Codex. Install it once per host and let each factory project route through its own `.omatic/factory.json` to the right O-Matic Server. Ships Probot, Fred, and Data as plugin-bundled skills.
 
-**Version:** 2.1.4
+**Version:** 2.1.5
 **Author:** James Walker / O-Matic AI Research Lab
 
 ---

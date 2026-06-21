@@ -1,7 +1,7 @@
 {
   "schema": "lucidit-agent-pack-v1",
   "name": "omatic-server-connection",
-  "version": "2.1.4",
+  "version": "2.1.5",
   "display_name": "O-Matic Server Connection",
   "owner": {
     "name": "lucidIT-LLC",
@@ -77,7 +77,7 @@
       "display_name": "O-Matic Server Connection",
       "canonical_skill": "skills/omatic-server-connection/SKILL.md",
       "mode": "plugin operating guide",
-      "version": "2.1.4",
+      "version": "2.1.5",
       "release": {
         "channel": "stable",
         "tags": [
