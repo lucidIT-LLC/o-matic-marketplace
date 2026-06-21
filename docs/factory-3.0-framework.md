@@ -37,7 +37,9 @@ pgvector-backed retrieval with lifecycle governance, auditable operating context
 | E | O-Matic Elementor cross-platform plugin | Carver | task #112, dec #77/#78 | plugin build | spec ready → build |
 | F | Fred file intake without Docling | Fred | task #111 | infra | spec → design |
 | G | Fred L2 Session-Rhythm continuity | Fred | task #110 | infra | spec → design |
-| H | Auto-embedding — Embedder standing service | Carver (build) / Data (health) | rule #314, SOP-019, PK-24/25, task #97/#98 | infra | **agent shipped (2.1.6)** → wire as standing service |
+| H | Auto-embedding — Embedder standing service | Carver (build) / Data (health) | rule #314, SOP-019, PK-24/25, task #97/#98 | infra | 🎯 **DESIGNED, deferred to 3.0 build cycle** (event-driven LISTEN/NOTIFY daemon on linus — decision #191); brain backfilled green in the interim |
+
+> **Beta status (2026-06-21):** `beta` is the **staged** v3 line. A/B are folded in; C is built and on beta. D–H are designed/scoped but **builds are deferred to the 3.0 upgrade cycle** — current focus is hardening v2 (stable) and keeping beta ready, not constructing 3.0. Nothing here ships to `stable` until the 3.0 cut.
 
 ---
 
