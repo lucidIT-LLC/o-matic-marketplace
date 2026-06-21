@@ -32,7 +32,7 @@ pgvector-backed retrieval with lifecycle governance, auditable operating context
 |---|-----------|-------|--------|------|-------|
 | A | Probot — SOP/Policy Guardian | Probot | commons #55 → **rule #270** | behavior/governance | ✅ **DONE** — governed rule, loads (behavior ∈ probot agreement) |
 | B | Fred — New-Customer Files-Folder Check | Fred | commons #55 → **rule #271** | behavior/governance | ✅ **DONE** — governed rule, loads (infra ∈ fred agreement) |
-| C | Startup modes — fast wake / normal / audit | Probot | pk #71, dec #156, task #113 | runner build | spec ready → build |
+| C | Startup modes — fast wake / normal / audit | Carver/Probot | pk #71, dec #156, task #113 | runner build | ✅ **on beta** — built, Smith re-gate PASS (#189), merged; reporting-depth only (cache deferred); not yet on stable |
 | D | O-Matic WordPress Factory plugin scaffold | Carver | task #114 | plugin build | spec ready → build |
 | E | O-Matic Elementor cross-platform plugin | Carver | task #112, dec #77/#78 | plugin build | spec ready → build |
 | F | Fred file intake without Docling | Fred | task #111 | infra | spec → design |
