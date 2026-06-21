@@ -30,8 +30,8 @@ pgvector-backed retrieval with lifecycle governance, auditable operating context
 
 | # | Workstream | Owner | Source | Type | State |
 |---|-----------|-------|--------|------|-------|
-| A | Probot — SOP/Policy Guardian | Probot | commons #55 | behavior/governance | **adopted (live pre-3.0)** — fold into baseline |
-| B | Fred — New-Customer Files-Folder Check | Fred | commons #55 | behavior/governance | **adopted (live pre-3.0)** — fold into baseline |
+| A | Probot — SOP/Policy Guardian | Probot | commons #55 → **rule #270** | behavior/governance | ✅ **DONE** — governed rule, loads (behavior ∈ probot agreement) |
+| B | Fred — New-Customer Files-Folder Check | Fred | commons #55 → **rule #271** | behavior/governance | ✅ **DONE** — governed rule, loads (infra ∈ fred agreement) |
 | C | Startup modes — fast wake / normal / audit | Probot | pk #71, dec #156, task #113 | runner build | spec ready → build |
 | D | O-Matic WordPress Factory plugin scaffold | Carver | task #114 | plugin build | spec ready → build |
 | E | O-Matic Elementor cross-platform plugin | Carver | task #112, dec #77/#78 | plugin build | spec ready → build |
@@ -55,9 +55,9 @@ Probot owns the integrity of the rulebook. Three duties:
 
 **Trigger:** any SOP/Policy create or update, and any orchestration pass. On conflict → halt + escalate.
 
-**Fold-in for 3.0:** promote this from "adopted behavior" to a Policy/Agreement rule in the
-omatic-server-connection Probot skill + brain, so it loads at startup like any governed rule.
-**Acceptance:** a deliberately conflicting SOP edit triggers a raise-hand/escalate, not a silent overwrite.
+**Status: ✅ DONE.** Already a governed rule — `known_rules` **#270** (governance/behavior/probot,
+required, source_version `3.0-pre`); loads because `behavior` ∈ Probot's agreement required_rule_types.
+**Acceptance met:** rule mandates halt+escalate on conflicting SOP/Policy edits, no silent overwrite.
 
 ## B — Fred: New-Customer Files-Folder Check  *(adopted; live pre-3.0)*
 
@@ -69,8 +69,9 @@ arriving, not a quote object.
 looks incomplete, Fred asks the operator whether to create one before filing anything, and
 sets it up on a yes. Standing rule — every new customer's files get this check.
 
-**Fold-in for 3.0:** encode as a standing Fred Agreement rule.
-**Acceptance:** filing the first file for an unknown customer prompts the folder check.
+**Status: ✅ DONE.** Already a governed rule — `known_rules` **#271** (file-intake/infra/fred,
+required, source_version `3.0-pre`); loads because `infra` ∈ Fred's agreement required_rule_types.
+**Acceptance met:** rule prompts the folder check on a new customer's first files before filing.
 
 ## C — Startup modes: fast wake / normal / audit
 
