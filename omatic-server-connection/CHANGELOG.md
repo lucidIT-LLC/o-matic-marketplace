@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.7 - 2026-06-21
+
+### Fixed
+- Claude Code marketplace distribution metadata now explicitly includes
+  Embedder in marketplace/plugin descriptions.
+- Release is tagged as `omatic-server-connection-v2.1.7` so marketplace
+  updaters that rely on Git tags can detect the new plugin release.
+
 ## 2.1.6 - 2026-06-21
 
 ### Added

@@ -6,7 +6,7 @@
 
 The connection layer for an O-Matic factory, packaged for MCP-capable hosts such as Claude Code and OpenAI Codex. Install it once per host and let each factory project route through its own `.omatic/factory.json` to the right O-Matic Server. Ships Probot, Fred, Data, and Embedder as plugin-bundled skills.
 
-**Version:** 2.1.6
+**Version:** 2.1.7
 **Author:** James Walker / O-Matic AI Research Lab
 
 ---
@@ -179,7 +179,7 @@ Expect `factory_file` pointing at your project's `.omatic/factory.json` and `act
 
 ## Changelog
 
-- **2.1.6** — Governed memory lifecycle + Embedder worker.
+- **2.1.7** — Governed memory lifecycle + Embedder worker.
   - Added `server/embedder-worker.js` and the `embed-o-matic-embedder` skill contract. Embedder refreshes vectors for admitted Tier 1/Tier 2 rows only; it does not decide truth, promotion, retirement, contradiction resolution, or authority.
   - Probot 14.2 defines the memory admission gate, lifecycle states, promotion/demotion triggers, contradiction handling, and operator escalation boundaries.
   - Fred 9.2 owns provenance, archives, custody, and safe retention; Data 5.1 owns lifecycle health, stale-vector audit, retired/superseded retrieval checks, and benchmark discipline.

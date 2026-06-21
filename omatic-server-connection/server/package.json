@@ -1,7 +1,7 @@
 {
   "name": "omatic-server-connection",
-  "version": "2.1.6",
-  "description": "O-Matic Server Connection — PostgreSQL MCP server for O-Matic factory projects. One install serves many factories via per-project .omatic/factory.json. Ships Probot, Fred, and Data skills.",
+  "version": "2.1.7",
+  "description": "O-Matic Server Connection — PostgreSQL MCP server for O-Matic factory projects. One install serves many factories via per-project .omatic/factory.json. Ships Probot, Fred, Data, and Embedder skills.",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
