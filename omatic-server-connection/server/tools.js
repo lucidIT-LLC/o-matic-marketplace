@@ -976,48 +976,13 @@ async function handleStartup(connections, args, explicitConnection = null) {
   });
 }
 
-// --- Factory 3.0: startup-mode green-check cache (pk #71, decision #156) ---
-// In-process, per-tenant snapshot of the last GREEN health detail. fast/normal
-// reuse it within the TTL to skip the heavy five-query battery; audit bypasses
-// it; any non-green snapshot is never cached (so a warning always re-checks).
-const STARTUP_HEALTH_TTL_MS = 90_000;
-const startupHealthCache = new Map(); // tenantId -> { startup, ts }
-
-function startupHealthIsGreen(startup) {
-  if (!startup) return false;
-  const readiness = queryRows(startup.readiness);
-  const embeddingRows = queryRows(startup.embedding);
-  const summary = firstStartupSummary(startup);
-  const governance = summary.governance_health || {};
-  const connectorTotal = readiness.length;
-  const connectorOk = readiness.filter((row) => row.status_label === "OK").length;
-  const stale = embeddingRows.reduce((total, row) => total + asNumber(row.stale), 0);
-  const unembedded = embeddingRows.reduce((total, row) => total + asNumber(row.unembedded), 0);
-  const ruleTarget = asNumber(governance.rule_count_target);
-  const ruleCount = asNumber(governance.active_rule_count);
-  const connectorsGreen = connectorTotal > 0 && connectorOk === connectorTotal;
-  const rulesGreen = !ruleTarget || ruleCount >= ruleTarget;
-  return connectorsGreen && rulesGreen && stale === 0 && unembedded === 0;
-}
-
-function getCachedStartupHealth(tenantId, nowMs) {
-  const hit = startupHealthCache.get(tenantId);
-  if (!hit) return null;
-  if (nowMs - hit.ts > STARTUP_HEALTH_TTL_MS) {
-    startupHealthCache.delete(tenantId);
-    return null;
-  }
-  return hit;
-}
-
-function setCachedStartupHealth(tenantId, startup, nowMs) {
-  if (startupHealthIsGreen(startup)) {
-    startupHealthCache.set(tenantId, { startup, ts: nowMs });
-    return true;
-  }
-  startupHealthCache.delete(tenantId);
-  return false;
-}
+// --- Factory 3.0: startup modes (pk #71, decision #156) ---
+// Modes control REPORTING DEPTH only. The full safety + health battery runs
+// fresh in every mode, so a broken agreement or empty rule corpus is never
+// masked. A persistent green-check cache to skip the battery across sessions is
+// deferred: an in-process cache gives no cross-session benefit (a per-session
+// stdio server starts cold every time) and could mask a startup HALT for up to
+// its TTL — see Smith gate, decision #188.
 
 // Fast-wake view: red/yellow items + resume point only. No full battery dump.
 function formatFastStartupView(payload) {
@@ -1052,7 +1017,7 @@ function formatFastStartupView(payload) {
 
   const lines = [];
   lines.push(`O-MATIC FAST WAKE — ${factory.factory_id || factory.name || "factory"} @ ${platform}`);
-  lines.push(`db=${dbName} session=${sessionId} health=${payload.health_source}`);
+  lines.push(`db=${dbName} session=${sessionId} mode=${payload.mode || "fast"}`);
   if (redYellow.length === 0) {
     lines.push("Status: GREEN — no red/yellow items.");
   } else {
@@ -1063,6 +1028,14 @@ function formatFastStartupView(payload) {
   lines.push(`Resume: ${resume}`);
   lines.push("(run mode=normal or mode=audit for full readiness detail)");
   return lines.join("\n");
+}
+
+// Mode -> view selector. fast = terse fast-wake view; normal/audit = full view.
+// Pure: the work (fresh health battery) already happened; this only chooses depth.
+function startupViewForMode(payload) {
+  return payload && payload.mode === "fast"
+    ? formatFastStartupView(payload)
+    : formatStartupView(payload);
 }
 
 async function handleStartupRun(connections, args, explicitConnection = null) {
@@ -1183,32 +1156,18 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     explicitConnection
   );
 
-  // Factory 3.0 startup modes (pk #71, decision #156). The non-negotiable
-  // safety path above (context verify, session insert, MCP seed, built-in
-  // probe, retrieval warm) runs in every mode. Only the heavy health detail
-  // below is mode-scoped, with a short-TTL green-check cache so repeated
-  // fast/normal starts do not re-run the five-query health battery.
+  // Factory 3.0 startup modes (pk #71, decision #156). Mode controls REPORTING
+  // DEPTH only. The non-negotiable safety path above AND the full health battery
+  // below run fresh in every mode — no caching — so a broken agreement or empty
+  // rule corpus is never masked (Smith gate, decision #188). fast renders a terse
+  // red/yellow + resume view; normal/audit render the full readiness view.
   const mode = ["fast", "normal", "audit"].includes(args.mode) ? args.mode : "normal";
-  const now = Date.now();
 
-  let healthSource = "fresh";
-  let startupSection;
-  const cached = mode === "audit" ? null : getCachedStartupHealth(tenantId, now);
-  if (cached) {
-    startupSection = cached.startup;
-    healthSource = "cache";
-  } else {
-    const startup = await handleStartup(connections, { session_id: sessionId }, explicitConnection);
-    const startupPayload = JSON.parse(startup.content[0].text);
-    startupSection = startupPayload.startup;
-    // Only a green snapshot is cached; a warning result is never reused and
-    // forces the next start to re-check.
-    setCachedStartupHealth(tenantId, startupSection, now);
-  }
+  const startup = await handleStartup(connections, { session_id: sessionId }, explicitConnection);
+  const startupPayload = JSON.parse(startup.content[0].text);
 
   const payload = {
     mode,
-    health_source: healthSource,
     factory: redactFactory(project),
     pinned_connection: explicitConnection,
     identity: verified.identity,
@@ -1218,11 +1177,11 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     brain_warm: brain.ok
       ? { ok: true, query: brainQuery, mode: brainMode, hits: brain.count }
       : { ok: false, query: brainQuery, mode: brainMode, error: brain.error },
-    startup: startupSection,
+    startup: startupPayload.startup,
   };
 
   return successResponse({
-    view: mode === "fast" ? formatFastStartupView(payload) : formatStartupView(payload),
+    view: startupViewForMode(payload),
     ...payload,
   });
 }
@@ -1915,10 +1874,7 @@ module.exports = {
   PER_CONNECTION_BASE_TOOLS,
   // Test affordance (Factory 3.0 startup modes) — pure helpers, no side effects.
   __test__: {
-    STARTUP_HEALTH_TTL_MS,
-    startupHealthIsGreen,
-    getCachedStartupHealth,
-    setCachedStartupHealth,
     formatFastStartupView,
+    startupViewForMode,
   },
 };
