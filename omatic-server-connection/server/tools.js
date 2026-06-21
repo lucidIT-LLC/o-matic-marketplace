@@ -536,6 +536,13 @@ function buildToolList(connections) {
             description: "Warm retrieval query. Default: active project context.",
             default: "active project context",
           },
+          mode: {
+            type: "string",
+            enum: ["fast", "normal", "audit"],
+            description:
+              "Startup intent (Factory 3.0). fast = non-negotiable safety checks + terse red/yellow + resume point, served from a short-TTL green-check cache on repeat starts; normal = full readiness/embedding/governance detail; audit = force a fresh full check, bypassing the cache. Default: normal.",
+            default: "normal",
+          },
         },
         additionalProperties: false,
       },
@@ -969,6 +976,95 @@ async function handleStartup(connections, args, explicitConnection = null) {
   });
 }
 
+// --- Factory 3.0: startup-mode green-check cache (pk #71, decision #156) ---
+// In-process, per-tenant snapshot of the last GREEN health detail. fast/normal
+// reuse it within the TTL to skip the heavy five-query battery; audit bypasses
+// it; any non-green snapshot is never cached (so a warning always re-checks).
+const STARTUP_HEALTH_TTL_MS = 90_000;
+const startupHealthCache = new Map(); // tenantId -> { startup, ts }
+
+function startupHealthIsGreen(startup) {
+  if (!startup) return false;
+  const readiness = queryRows(startup.readiness);
+  const embeddingRows = queryRows(startup.embedding);
+  const summary = firstStartupSummary(startup);
+  const governance = summary.governance_health || {};
+  const connectorTotal = readiness.length;
+  const connectorOk = readiness.filter((row) => row.status_label === "OK").length;
+  const stale = embeddingRows.reduce((total, row) => total + asNumber(row.stale), 0);
+  const unembedded = embeddingRows.reduce((total, row) => total + asNumber(row.unembedded), 0);
+  const ruleTarget = asNumber(governance.rule_count_target);
+  const ruleCount = asNumber(governance.active_rule_count);
+  const connectorsGreen = connectorTotal > 0 && connectorOk === connectorTotal;
+  const rulesGreen = !ruleTarget || ruleCount >= ruleTarget;
+  return connectorsGreen && rulesGreen && stale === 0 && unembedded === 0;
+}
+
+function getCachedStartupHealth(tenantId, nowMs) {
+  const hit = startupHealthCache.get(tenantId);
+  if (!hit) return null;
+  if (nowMs - hit.ts > STARTUP_HEALTH_TTL_MS) {
+    startupHealthCache.delete(tenantId);
+    return null;
+  }
+  return hit;
+}
+
+function setCachedStartupHealth(tenantId, startup, nowMs) {
+  if (startupHealthIsGreen(startup)) {
+    startupHealthCache.set(tenantId, { startup, ts: nowMs });
+    return true;
+  }
+  startupHealthCache.delete(tenantId);
+  return false;
+}
+
+// Fast-wake view: red/yellow items + resume point only. No full battery dump.
+function formatFastStartupView(payload) {
+  const startup = payload.startup || {};
+  const summary = firstStartupSummary(startup);
+  const readiness = queryRows(startup.readiness);
+  const embeddingRows = queryRows(startup.embedding);
+  const governance = summary.governance_health || {};
+  const session = payload.session || {};
+  const identity = payload.identity || {};
+  const factory = payload.factory || {};
+  const dbName = identity.db_name || "unknown-db";
+  const platform = session.platform || factory.platform_profile || "unknown";
+  const sessionId = session.id || "unknown";
+
+  const redYellow = [];
+  for (const row of readiness) {
+    if (row.status_label && row.status_label !== "OK") {
+      redYellow.push(`${row.status_label}: connector ${row.connector_name || row.name || row.connector || "?"}`);
+    }
+  }
+  const stale = embeddingRows.reduce((total, row) => total + asNumber(row.stale), 0);
+  const unembedded = embeddingRows.reduce((total, row) => total + asNumber(row.unembedded), 0);
+  if (stale || unembedded) redYellow.push(`WARN: embeddings ${stale} stale / ${unembedded} unembedded`);
+  const ruleTarget = asNumber(governance.rule_count_target);
+  const ruleCount = asNumber(governance.active_rule_count);
+  if (ruleTarget && ruleCount < ruleTarget) redYellow.push(`WARN: governance ${ruleCount}/${ruleTarget} rules`);
+
+  const resume =
+    session.resume_notes || summary.last_resume_notes || summary.last_summary || "no resume point recorded";
+  const openTasks = summary.open_task_total || "0";
+
+  const lines = [];
+  lines.push(`O-MATIC FAST WAKE — ${factory.factory_id || factory.name || "factory"} @ ${platform}`);
+  lines.push(`db=${dbName} session=${sessionId} health=${payload.health_source}`);
+  if (redYellow.length === 0) {
+    lines.push("Status: GREEN — no red/yellow items.");
+  } else {
+    lines.push(`Status: ${redYellow.length} item(s) need attention:`);
+    for (const item of redYellow) lines.push(`  - ${item}`);
+  }
+  lines.push(`Open P1+ tasks: ${openTasks}`);
+  lines.push(`Resume: ${resume}`);
+  lines.push("(run mode=normal or mode=audit for full readiness detail)");
+  return lines.join("\n");
+}
+
 async function handleStartupRun(connections, args, explicitConnection = null) {
   const verified = await verifyFactoryContext(connections, explicitConnection);
   if (!verified.ok) return errorResponse(verified.error, verified);
@@ -1087,9 +1183,32 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     explicitConnection
   );
 
-  const startup = await handleStartup(connections, { session_id: sessionId }, explicitConnection);
-  const startupPayload = JSON.parse(startup.content[0].text);
+  // Factory 3.0 startup modes (pk #71, decision #156). The non-negotiable
+  // safety path above (context verify, session insert, MCP seed, built-in
+  // probe, retrieval warm) runs in every mode. Only the heavy health detail
+  // below is mode-scoped, with a short-TTL green-check cache so repeated
+  // fast/normal starts do not re-run the five-query health battery.
+  const mode = ["fast", "normal", "audit"].includes(args.mode) ? args.mode : "normal";
+  const now = Date.now();
+
+  let healthSource = "fresh";
+  let startupSection;
+  const cached = mode === "audit" ? null : getCachedStartupHealth(tenantId, now);
+  if (cached) {
+    startupSection = cached.startup;
+    healthSource = "cache";
+  } else {
+    const startup = await handleStartup(connections, { session_id: sessionId }, explicitConnection);
+    const startupPayload = JSON.parse(startup.content[0].text);
+    startupSection = startupPayload.startup;
+    // Only a green snapshot is cached; a warning result is never reused and
+    // forces the next start to re-check.
+    setCachedStartupHealth(tenantId, startupSection, now);
+  }
+
   const payload = {
+    mode,
+    health_source: healthSource,
     factory: redactFactory(project),
     pinned_connection: explicitConnection,
     identity: verified.identity,
@@ -1099,11 +1218,11 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     brain_warm: brain.ok
       ? { ok: true, query: brainQuery, mode: brainMode, hits: brain.count }
       : { ok: false, query: brainQuery, mode: brainMode, error: brain.error },
-    startup: startupPayload.startup,
+    startup: startupSection,
   };
 
   return successResponse({
-    view: formatStartupView(payload),
+    view: mode === "fast" ? formatFastStartupView(payload) : formatStartupView(payload),
     ...payload,
   });
 }
@@ -1794,4 +1913,12 @@ module.exports = {
   handleToolCall,
   setNotifyToolsChanged,
   PER_CONNECTION_BASE_TOOLS,
+  // Test affordance (Factory 3.0 startup modes) — pure helpers, no side effects.
+  __test__: {
+    STARTUP_HEALTH_TTL_MS,
+    startupHealthIsGreen,
+    getCachedStartupHealth,
+    setCachedStartupHealth,
+    formatFastStartupView,
+  },
 };
