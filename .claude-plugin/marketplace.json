@@ -5,15 +5,15 @@
     "email": "lucideye@icloud.com"
   },
   "metadata": {
-    "description": "The O-Matic marketplace \u2014 every O-Matic plugin in one catalog. The o-matic.ai marketplace.",
+    "description": "The O-Matic marketplace — every O-Matic plugin in one catalog. The o-matic.ai marketplace.",
     "homepage": "https://o-matic.ai"
   },
   "plugins": [
     {
       "name": "omatic-server-connection",
-      "version": "2.2.0",
+      "version": "2.2.1",
       "source": "./omatic-server-connection",
-      "description": "O-Matic Server connection \u2014 the MCP plugin that connects Claude Code and Codex to an O-Matic Server and ships Probot (orchestrator), Fred (storage + connection CRUD), Data (analyst + DBA), and Embedder (background vector refresh) skills. Connects to the factory brain; does not bundle a database.",
+      "description": "O-Matic Server connection — the MCP plugin that connects Claude Code and Codex to an O-Matic Server and ships Probot (orchestrator), Fred (storage + connection CRUD), Data (analyst + DBA), and Embedder (background vector refresh) skills. Connects to the factory brain; does not bundle a database.",
       "author": {
         "name": "James Walker",
         "url": "https://o-matic.ai"
