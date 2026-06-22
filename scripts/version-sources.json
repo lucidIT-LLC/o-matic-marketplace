@@ -1,0 +1,58 @@
+{
+  "_comment": "Per-plugin version-source map (rule #287). The marketplace catalog entry is CANONICAL; every other source must equal it. Add a source here when a plugin grows a new place that carries its version, or the alignment check will not see it. type=marketplace reads the canonical catalog entry; type=json reads obj[field]; type=regex captures group 1 from the first matching line (case-sensitive).",
+  "canonicalType": "marketplace",
+  "catalogFiles": [
+    "marketplace.json",
+    ".claude-plugin/marketplace.json"
+  ],
+  "plugins": {
+    "omatic-server-connection": {
+      "runtime": true,
+      "sources": [
+        { "type": "marketplace", "label": "catalog (canonical)" },
+        { "type": "json", "path": "omatic-server-connection/.claude-plugin/plugin.json", "field": "version", "label": "plugin.json" },
+        { "type": "json", "path": "omatic-server-connection/package.json", "field": "version", "label": "package.json" },
+        { "type": "json", "path": "omatic-server-connection/server/package.json", "field": "version", "label": "server/package.json" },
+        { "type": "regex", "path": "omatic-server-connection/server/index.js", "pattern": "PLUGIN_VERSION\\s*=\\s*[\"']([^\"']+)[\"']", "label": "runtime PLUGIN_VERSION (server/index.js)" }
+      ]
+    },
+    "o-matic-wordpress-factory": {
+      "runtime": true,
+      "sources": [
+        { "type": "marketplace", "label": "catalog (canonical)" },
+        { "type": "json", "path": "o-matic-wordpress-factory/.claude-plugin/plugin.json", "field": "version", "label": "plugin.json" },
+        { "type": "json", "path": "o-matic-wordpress-factory/package.json", "field": "version", "label": "package.json" },
+        { "type": "regex", "path": "o-matic-wordpress-factory/server/index.mjs", "pattern": "version:\\s*[\"']([^\"']+)[\"']", "label": "runtime version (server/index.mjs WP connector)" },
+        { "type": "regex", "path": "o-matic-wordpress-factory/server/elementor.mjs", "pattern": "version:\\s*[\"']([^\"']+)[\"']", "label": "runtime version (server/elementor.mjs Elementor connector)" }
+      ]
+    },
+    "smith": {
+      "runtime": false,
+      "sources": [
+        { "type": "marketplace", "label": "catalog (canonical)" },
+        { "type": "json", "path": "smith/.claude-plugin/plugin.json", "field": "version", "label": "plugin.json" }
+      ]
+    },
+    "jo": {
+      "runtime": false,
+      "sources": [
+        { "type": "marketplace", "label": "catalog (canonical)" },
+        { "type": "json", "path": "jo/.claude-plugin/plugin.json", "field": "version", "label": "plugin.json" }
+      ]
+    },
+    "tim": {
+      "runtime": false,
+      "sources": [
+        { "type": "marketplace", "label": "catalog (canonical)" },
+        { "type": "json", "path": "tim/.claude-plugin/plugin.json", "field": "version", "label": "plugin.json" }
+      ]
+    },
+    "rimmer": {
+      "runtime": false,
+      "sources": [
+        { "type": "marketplace", "label": "catalog (canonical)" },
+        { "type": "json", "path": "rimmer/.claude-plugin/plugin.json", "field": "version", "label": "plugin.json" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,51 @@
+name: release
+
+# State-reconciliation release. On every push to the default (stable) branch, for each
+# plugin whose canonical catalog version has no matching immutable tag, cut
+# <plugin>-vX.Y.Z and publish a GitHub Release. Idempotent: already-released versions
+# are a no-op. The release job will NOT run unless the rule #287 verify job passes,
+# so no tag is ever cut off a drifted tree (Smith #3).
+#
+# Never touches the moving `stable` tag (decision #180). Never cuts the marketplace-wide
+# vX.Y.Z milestone — that stays manual (decision #177).
+
+on:
+  push:
+    branches: ["stable"]
+
+permissions:
+  contents: write   # create/push tags and publish releases
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git fetch --tags --force
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Verify rule #287 alignment
+        run: node scripts/version-align.mjs
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git fetch --tags --force
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Configure git identity
+        run: |
+          git config user.name "o-matic-release-bot"
+          git config user.email "info@o-matic.ai"
+      - name: Reconcile releases (idempotent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/release-reconcile.mjs --write
