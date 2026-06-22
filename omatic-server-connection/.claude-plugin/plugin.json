@@ -29,12 +29,5 @@
         "OMATIC_PLATFORM": "claude-code"
       }
     }
-  },
-  "release": {
-    "channel": "stable",
-    "tags": [
-      "stable"
-    ],
-    "latest": true
   }
 }

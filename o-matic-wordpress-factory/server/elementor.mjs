@@ -6,7 +6,7 @@ createConnectorServer({
   serverName: "o-matic-elementor-connector",
   displayName: "Elementor Factory Connector",
   upstreamLabel: "Elementor MCP",
-  version: "1.0.0",
+  version: "1.0.2",
   toolBase: "elementor_factory",
   forwardPrefix: "elementor__",
   factoryFileName: "elementor-factory.json",

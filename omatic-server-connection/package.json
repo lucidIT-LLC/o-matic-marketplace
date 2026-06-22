@@ -1,6 +1,6 @@
 {
   "name": "omatic-server-connection",
-  "version": "2.1.7",
+  "version": "2.2.0",
   "private": true,
   "description": "O-Matic Server Connection plugin package for Codex and Claude Code.",
   "type": "commonjs",

@@ -1,0 +1,25 @@
+name: verify-versions
+
+# Rule #287 alignment gate. Runs on every push and PR. Drift, regression, a missing
+# version source, or catalog-file disagreement turns the build red.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  version-align:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + tags so monotonicity can compare against released tags
+      - name: Fetch tags
+        run: git fetch --tags --force
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run version-align (rule #287)
+        run: node scripts/version-align.mjs
