@@ -1,6 +1,6 @@
 {
   "name": "smith",
-  "version": "7.1.1",
+  "version": "7.1.2",
   "description": "Critical Analyst. Smith stress-tests plans, copy, architecture, and assumptions. Cold, surgical, adversarial. Pre-mortems, assumption attacks, copy critique, and factory audits.",
   "author": {
     "name": "James Walker / lucidIT-LLC",
@@ -36,7 +36,7 @@
       "Run a pre-mortem on this architecture.",
       "Find what is wrong with this copy."
     ],
-    "brandColor": "#2563EB"
+    "brandColor": "#00B5AD"
   },
   "release": {
     "channel": "stable",

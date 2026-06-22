@@ -19,7 +19,9 @@
     "helper_scripts": {
       "print_system_prompt": "scripts/print-system-prompt.mjs",
       "build_ollama_modelfile": "scripts/build-ollama-modelfile.mjs",
-      "sync_bundled_skills": "scripts/sync-bundled-skills.mjs"
+      "sync_bundled_skills": "scripts/sync-bundled-skills.mjs",
+      "sync_shared_skills": "scripts/sync-shared-skills.mjs",
+      "audit_installed_skill_duplicates": "scripts/audit-installed-skill-duplicates.mjs"
     }
   },
   "adapters": {
@@ -87,7 +89,7 @@
       "display_name": "Jo",
       "role": "Writing Coach",
       "version": "4.0.1",
-      "signature": 4,
+      "signature": 5,
       "canonical_skill": "jo/skills/jo/SKILL.md",
       "codex_skill": ".agents/skills/jo/SKILL.md",
       "claude_plugin": "jo/.claude-plugin/plugin.json",

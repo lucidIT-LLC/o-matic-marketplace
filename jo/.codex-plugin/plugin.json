@@ -1,6 +1,6 @@
 {
   "name": "jo",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "Writing Coach. Jo coaches writers through feedback, structure, style, and voice development. Serves both creative writers and professional communicators.",
   "author": {
     "name": "James Walker / lucidIT-LLC",
@@ -37,7 +37,7 @@
       "Give me a quick impression of this opening.",
       "Help me develop the voice in this piece."
     ],
-    "brandColor": "#2563EB"
+    "brandColor": "#00B5AD"
   },
   "release": {
     "channel": "stable",

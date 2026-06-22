@@ -1,6 +1,6 @@
 {
   "name": "rimmer",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Evidence-first evaluator for O-Matic skills, agents, factory workflows, and plugin releases.",
   "author": {
     "name": "James Walker / lucidIT-LLC",
@@ -37,7 +37,7 @@
       "Rimmer, run a Factory 2.0 alignment eval.",
       "Rimmer, collect evidence for this agent."
     ],
-    "brandColor": "#F5B82E"
+    "brandColor": "#00B5AD"
   },
   "release": {
     "channel": "stable",

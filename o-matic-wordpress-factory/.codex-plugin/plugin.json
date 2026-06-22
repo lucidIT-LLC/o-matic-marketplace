@@ -1,6 +1,6 @@
 {
   "name": "o-matic-wordpress-factory",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "O-Matic WordPress Factory plugin with bundled brand, build, writing, and visual skills plus separate WordPress and Elementor MCP connectors.",
   "author": {
     "name": "James Walker",
@@ -51,7 +51,7 @@
       "Activate a stored WordPress or Elementor Factory profile.",
       "List available WordPress and Elementor MCP tools."
     ],
-    "brandColor": "#2563EB"
+    "brandColor": "#00B5AD"
   },
   "release": {
     "channel": "stable",

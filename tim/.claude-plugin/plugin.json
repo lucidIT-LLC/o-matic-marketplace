@@ -1,6 +1,6 @@
 {
   "name": "tim",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "Tool Optimizer. Tim scopes which MCP connectors a project actually needs, documents them from live schemas, and makes sure agents use the right tool correctly on the first try.",
   "author": {
     "name": "James Walker / LucidIT"

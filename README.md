@@ -50,6 +50,17 @@ claude plugin install smith@o-matic.ai
 
 Every plugin lives in this one repo — no external git-subdir references, each with its own version. `jo` is canonical here and bundled into the WordPress Factory; `scripts/sync-shared-skills.mjs --check` keeps those copies identical. (The O-Matic Server container ships separately at `lucidIT-LLC/o-matic-server-container` — that's infra, not a plugin.)
 
+## Shared Skills
+
+Jo is a shared skill. Install standalone `jo` for writing-only work, or install `o-matic-wordpress-factory` when the WordPress/Elementor workflow should also bring Jo with Brandy, Carver, and Monet. In Codex, do not enable both providers at the same time unless you are explicitly auditing same-signature behavior; otherwise the UI will show duplicate Jo entries even when the two files are byte-identical.
+
+Before release or reinstall, run:
+
+```
+node scripts/sync-shared-skills.mjs --check
+node scripts/audit-installed-skill-duplicates.mjs
+```
+
 ## Under the hood
 
 Catalog manifests: `.claude-plugin/marketplace.json` (Claude Code) and `.agents/plugins/marketplace.json` (Codex parity). Host-neutral adapters (Codex, Gemini, Ollama) and `agent-pack.json` live alongside for non-Claude hosts.

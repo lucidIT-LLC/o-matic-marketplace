@@ -114,7 +114,8 @@
       "display_name": "Jo",
       "canonical_skill": "skills/jo/SKILL.md",
       "mode": "writing coach",
-      "version": "4.0.0",
+      "version": "4.0.1",
+      "signature": 5,
       "release": {
         "channel": "stable",
         "tags": [
