@@ -1,6 +1,6 @@
 {
   "name": "tim",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "Tool Optimizer. Tim scopes MCP connectors, documents live schemas, and makes sure agents use the right tool correctly on the first try.",
   "author": {
     "name": "James Walker / lucidIT-LLC",
@@ -38,7 +38,7 @@
       "What MCP connectors do we actually need here?",
       "Document this connector from the live schema."
     ],
-    "brandColor": "#2563EB"
+    "brandColor": "#00B5AD"
   },
   "release": {
     "channel": "stable",

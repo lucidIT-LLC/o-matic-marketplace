@@ -19,7 +19,9 @@
     "helper_scripts": {
       "print_system_prompt": "scripts/print-system-prompt.mjs",
       "build_ollama_modelfile": "scripts/build-ollama-modelfile.mjs",
-      "sync_bundled_skills": "scripts/sync-bundled-skills.mjs"
+      "sync_bundled_skills": "scripts/sync-bundled-skills.mjs",
+      "sync_shared_skills": "scripts/sync-shared-skills.mjs",
+      "audit_installed_skill_duplicates": "scripts/audit-installed-skill-duplicates.mjs"
     }
   },
   "adapters": {
@@ -51,7 +53,7 @@
       "id": "smith",
       "display_name": "Smith",
       "role": "Critical Analyst",
-      "version": "7.1.1",
+      "version": "7.1.2",
       "signature": 9,
       "canonical_skill": "smith/skills/smith/SKILL.md",
       "codex_skill": ".agents/skills/smith/SKILL.md",
@@ -86,8 +88,8 @@
       "id": "jo",
       "display_name": "Jo",
       "role": "Writing Coach",
-      "version": "4.0.1",
-      "signature": 4,
+      "version": "4.0.2",
+      "signature": 5,
       "canonical_skill": "jo/skills/jo/SKILL.md",
       "codex_skill": ".agents/skills/jo/SKILL.md",
       "claude_plugin": "jo/.claude-plugin/plugin.json",
@@ -120,7 +122,7 @@
       "id": "tim",
       "display_name": "Tim",
       "role": "Tool Optimizer",
-      "version": "4.0.1",
+      "version": "4.0.2",
       "signature": 6,
       "canonical_skill": "tim/skills/tim/SKILL.md",
       "codex_skill": ".agents/skills/tim/SKILL.md",
@@ -153,7 +155,7 @@
       "id": "rimmer",
       "display_name": "Rimmer",
       "role": "Evaluator",
-      "version": "2.1.0",
+      "version": "2.1.1",
       "signature": 3,
       "canonical_skill": "rimmer/skills/rimmer/SKILL.md",
       "codex_skill": ".agents/skills/rimmer/SKILL.md",

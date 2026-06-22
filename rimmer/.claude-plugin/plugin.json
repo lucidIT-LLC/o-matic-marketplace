@@ -1,6 +1,6 @@
 {
   "name": "rimmer",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Evidence-first evaluator for O-Matic skills, agents, factory workflows, and plugin releases.",
   "author": {
     "name": "James Walker / LucidIT"

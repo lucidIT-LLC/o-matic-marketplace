@@ -153,8 +153,16 @@ STEP 2 — Read platform + connection state
 +- -> STEP 3
 
 STEP 3 — Startup runner
-|- Call omatic_factory_startup_run
-|- Plugin returns:
+|- Call omatic_factory_startup_run with a mode (Factory 3.0 — pk #71, decision #156):
+|    mode="fast"   — routine work entry (the day-to-day default). Returns a terse
+|                    view: red/yellow items + resume point only.
+|    mode="normal" — fuller readiness/embedding/governance summary (cold start,
+|                    or when the operator wants the full picture).
+|    mode="audit"  — diagnose/health/audit requests; full readiness view. Pair
+|                    with "start an audit".
+|  Mode controls REPORTING DEPTH only — the full safety + health battery runs
+|  fresh in EVERY mode, so a broken agreement or empty rule corpus is never masked.
+|- Plugin returns (normal/audit; fast returns the same fields with a terse view):
 |    session       — current platform-specific factory_sessions row
 |    summary       — v_startup_summary (last session, tasks, embedding_health, decommissioned_terms)
 |    rules         — v_startup_rules for agent='probot'
@@ -194,10 +202,18 @@ STEP 5 — Standalone mode
 
 ### start the factory
 First message of any session. Runs the full startup sequence above.
+Default to `mode="fast"` for a returning/known workspace (terse red/yellow +
+resume); use `mode="normal"` on a cold start or when the operator wants the full
+readiness picture.
+
+### wake / fast wake
+Quickest entry to work. Run the startup sequence with `mode="fast"` — report only
+red/yellow items and the resume point, nothing else. The full check still runs
+fresh; fast only trims the report, so any non-green item is always surfaced.
 
 ### start an audit
 Mid-session health check. Does not re-run startup.
-1. Re-call `omatic_factory_health_check` (or `omatic_factory_startup`)
+1. Re-call `omatic_factory_health_check`, or `omatic_factory_startup_run` with `mode="audit"` (full readiness view)
 2. Re-probe critical connectors via `omatic_record_probe_result`
 3. Surface: untracked installs, open task delta, any known_rules changes since last audit
 

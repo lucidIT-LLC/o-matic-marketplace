@@ -536,6 +536,13 @@ function buildToolList(connections) {
             description: "Warm retrieval query. Default: active project context.",
             default: "active project context",
           },
+          mode: {
+            type: "string",
+            enum: ["fast", "normal", "audit"],
+            description:
+              "Startup intent (Factory 3.0). fast = non-negotiable safety checks + terse red/yellow + resume point, served from a short-TTL green-check cache on repeat starts; normal = full readiness/embedding/governance detail; audit = force a fresh full check, bypassing the cache. Default: normal.",
+            default: "normal",
+          },
         },
         additionalProperties: false,
       },
@@ -969,6 +976,68 @@ async function handleStartup(connections, args, explicitConnection = null) {
   });
 }
 
+// --- Factory 3.0: startup modes (pk #71, decision #156) ---
+// Modes control REPORTING DEPTH only. The full safety + health battery runs
+// fresh in every mode, so a broken agreement or empty rule corpus is never
+// masked. A persistent green-check cache to skip the battery across sessions is
+// deferred: an in-process cache gives no cross-session benefit (a per-session
+// stdio server starts cold every time) and could mask a startup HALT for up to
+// its TTL — see Smith gate, decision #188.
+
+// Fast-wake view: red/yellow items + resume point only. No full battery dump.
+function formatFastStartupView(payload) {
+  const startup = payload.startup || {};
+  const summary = firstStartupSummary(startup);
+  const readiness = queryRows(startup.readiness);
+  const embeddingRows = queryRows(startup.embedding);
+  const governance = summary.governance_health || {};
+  const session = payload.session || {};
+  const identity = payload.identity || {};
+  const factory = payload.factory || {};
+  const dbName = identity.db_name || "unknown-db";
+  const platform = session.platform || factory.platform_profile || "unknown";
+  const sessionId = session.id || "unknown";
+
+  const redYellow = [];
+  for (const row of readiness) {
+    if (row.status_label && row.status_label !== "OK") {
+      redYellow.push(`${row.status_label}: connector ${row.connector_name || row.name || row.connector || "?"}`);
+    }
+  }
+  const stale = embeddingRows.reduce((total, row) => total + asNumber(row.stale), 0);
+  const unembedded = embeddingRows.reduce((total, row) => total + asNumber(row.unembedded), 0);
+  if (stale || unembedded) redYellow.push(`WARN: embeddings ${stale} stale / ${unembedded} unembedded`);
+  const ruleTarget = asNumber(governance.rule_count_target);
+  const ruleCount = asNumber(governance.active_rule_count);
+  if (ruleTarget && ruleCount < ruleTarget) redYellow.push(`WARN: governance ${ruleCount}/${ruleTarget} rules`);
+
+  const resume =
+    session.resume_notes || summary.last_resume_notes || summary.last_summary || "no resume point recorded";
+  const openTasks = summary.open_task_total || "0";
+
+  const lines = [];
+  lines.push(`O-MATIC FAST WAKE — ${factory.factory_id || factory.name || "factory"} @ ${platform}`);
+  lines.push(`db=${dbName} session=${sessionId} mode=${payload.mode || "fast"}`);
+  if (redYellow.length === 0) {
+    lines.push("Status: GREEN — no red/yellow items.");
+  } else {
+    lines.push(`Status: ${redYellow.length} item(s) need attention:`);
+    for (const item of redYellow) lines.push(`  - ${item}`);
+  }
+  lines.push(`Open P1+ tasks: ${openTasks}`);
+  lines.push(`Resume: ${resume}`);
+  lines.push("(run mode=normal or mode=audit for full readiness detail)");
+  return lines.join("\n");
+}
+
+// Mode -> view selector. fast = terse fast-wake view; normal/audit = full view.
+// Pure: the work (fresh health battery) already happened; this only chooses depth.
+function startupViewForMode(payload) {
+  return payload && payload.mode === "fast"
+    ? formatFastStartupView(payload)
+    : formatStartupView(payload);
+}
+
 async function handleStartupRun(connections, args, explicitConnection = null) {
   const verified = await verifyFactoryContext(connections, explicitConnection);
   if (!verified.ok) return errorResponse(verified.error, verified);
@@ -1087,9 +1156,18 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     explicitConnection
   );
 
+  // Factory 3.0 startup modes (pk #71, decision #156). Mode controls REPORTING
+  // DEPTH only. The non-negotiable safety path above AND the full health battery
+  // below run fresh in every mode — no caching — so a broken agreement or empty
+  // rule corpus is never masked (Smith gate, decision #188). fast renders a terse
+  // red/yellow + resume view; normal/audit render the full readiness view.
+  const mode = ["fast", "normal", "audit"].includes(args.mode) ? args.mode : "normal";
+
   const startup = await handleStartup(connections, { session_id: sessionId }, explicitConnection);
   const startupPayload = JSON.parse(startup.content[0].text);
+
   const payload = {
+    mode,
     factory: redactFactory(project),
     pinned_connection: explicitConnection,
     identity: verified.identity,
@@ -1103,7 +1181,7 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
   };
 
   return successResponse({
-    view: formatStartupView(payload),
+    view: startupViewForMode(payload),
     ...payload,
   });
 }
@@ -1794,4 +1872,9 @@ module.exports = {
   handleToolCall,
   setNotifyToolsChanged,
   PER_CONNECTION_BASE_TOOLS,
+  // Test affordance (Factory 3.0 startup modes) — pure helpers, no side effects.
+  __test__: {
+    formatFastStartupView,
+    startupViewForMode,
+  },
 };
