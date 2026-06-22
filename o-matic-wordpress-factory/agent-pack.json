@@ -1,7 +1,7 @@
 {
   "schema": "lucidit-agent-pack-v1",
   "name": "o-matic-wordpress-factory",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "display_name": "O-Matic WordPress Factory",
   "release": {
     "channel": "stable",
@@ -114,7 +114,7 @@
       "display_name": "Jo",
       "canonical_skill": "skills/jo/SKILL.md",
       "mode": "writing coach",
-      "version": "4.0.1",
+      "version": "4.0.2",
       "signature": 5,
       "release": {
         "channel": "stable",
