@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "omatic-server-connection",
-      "version": "2.1.8",
+      "version": "2.2.0",
       "source": "./omatic-server-connection",
       "description": "O-Matic Server connection \u2014 the MCP plugin that connects Claude Code and Codex to an O-Matic Server and ships Probot (orchestrator), Fred (storage + connection CRUD), Data (analyst + DBA), and Embedder (background vector refresh) skills. Connects to the factory brain; does not bundle a database.",
       "author": {
