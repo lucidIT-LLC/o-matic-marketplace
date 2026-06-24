@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "omatic-server-connection",
-      "version": "2.1.7",
+      "version": "2.2.1",
       "source": "./omatic-server-connection",
       "description": "O-Matic Server connection \u2014 the MCP plugin that connects Claude Code and Codex to an O-Matic Server and ships Probot (orchestrator), Fred (storage + connection CRUD), Data (analyst + DBA), and Embedder (background vector refresh) skills. Connects to the factory brain; does not bundle a database.",
       "author": {
@@ -33,7 +33,7 @@
     },
     {
       "name": "smith",
-      "version": "7.1.1",
+      "version": "7.1.2",
       "source": "./smith",
       "description": "Critical Analyst. Smith stress-tests plans, copy, architecture, and assumptions. Cold, surgical, adversarial. Pre-mortems, assumption attacks, factory audits.",
       "author": {
@@ -52,7 +52,7 @@
     },
     {
       "name": "jo",
-      "version": "4.0.1",
+      "version": "4.0.2",
       "source": "./jo",
       "description": "Writing Coach. Jo coaches writers through feedback, structure, style, and voice development. Serves creative writers and professional communicators equally.",
       "author": {
@@ -71,7 +71,7 @@
     },
     {
       "name": "tim",
-      "version": "4.0.1",
+      "version": "4.0.2",
       "source": "./tim",
       "description": "Tool Optimizer. Tim scopes MCP connectors, documents them from live schemas, and makes sure agents use the right tool correctly on the first try.",
       "author": {
@@ -90,7 +90,7 @@
     },
     {
       "name": "rimmer",
-      "version": "2.1.0",
+      "version": "2.1.1",
       "source": "./rimmer",
       "description": "Evidence-first evaluator for O-Matic skills, agents, factory workflows, and plugin releases.",
       "author": {
@@ -109,7 +109,7 @@
     },
     {
       "name": "o-matic-wordpress-factory",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "source": "./o-matic-wordpress-factory",
       "description": "O-Matic WordPress Factory plugin with bundled brand, build, writing, and visual skills plus separate WordPress and Elementor MCP connectors.",
       "author": {

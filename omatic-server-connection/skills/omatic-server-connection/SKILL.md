@@ -5,7 +5,7 @@ description: Use when operating an O-Matic Server project through the Codex plug
 
 # O-Matic Server
 
-<!-- version: 2.1.7 | sig: 2 | author: James Walker | package: O-Matic Server Connection -->
+<!-- version: 2.2.1 | sig: 2 | author: James Walker | package: O-Matic Server Connection -->
 
 This plugin is project-centric. Resolve the active factory from folder context before running factory work.
 
