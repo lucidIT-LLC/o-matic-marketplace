@@ -21,7 +21,8 @@ Embedder is the plugin-shipped worker that turns admitted memory rows into vecto
 Embedder:
 
 - Resolves the active factory from `.omatic/factory.json`, `OMATIC_PROJECT_ROOT`, or `OMATIC_FACTORY_JSON_PATH`.
-- Reads embedding configuration from `factory.factory_config` where `category = 'embedding'`.
+- Reads embedding configuration from `factory.factory_config` where `category = 'embedding'`, or from newer `factory.config` rows when a factory uses the Factory 2.0 config shape.
+- Resolves `factory.secrets:<secret_key>` config pointers at runtime without logging secret values.
 - Embeds Tier 1 `brain.semantic_index.summary_text`.
 - Embeds Tier 2 `brain.document_chunks.content`.
 - Writes `embedding`, `model_version`, `embedded_at`, and clears `embedding_stale`.

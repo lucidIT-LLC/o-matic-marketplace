@@ -1352,9 +1352,9 @@ async function handleEmbeddingStatus(connections, _args, explicitConnection = nu
     optionalQuery(connections, "SELECT * FROM v_embedding_health", [], explicitConnection),
     optionalQuery(
       connections,
-      `SELECT tablename, indexname, indexdef
+      `SELECT schemaname, tablename, indexname, indexdef
        FROM pg_indexes
-       WHERE schemaname = 'public'
+       WHERE schemaname IN ('public', 'brain')
          AND tablename IN ('semantic_index', 'document_chunks')
          AND (
            indexdef ILIKE '%hnsw%'
@@ -1380,12 +1380,12 @@ async function handleEmbeddingStatus(connections, _args, explicitConnection = nu
     ),
     optionalQuery(
       connections,
-      `SELECT table_name, column_name, data_type, udt_name
+      `SELECT table_schema, table_name, column_name, data_type, udt_name
        FROM information_schema.columns
-       WHERE table_schema = 'public'
+       WHERE table_schema IN ('public', 'brain')
          AND table_name IN ('semantic_index', 'document_chunks')
          AND column_name IN ('embedding', 'embedding_stale', 'model_version', 'tsv')
-       ORDER BY table_name, column_name`,
+       ORDER BY table_schema, table_name, column_name`,
       [],
       explicitConnection
     ),
@@ -1431,8 +1431,16 @@ async function handleEmbeddingStatus(connections, _args, explicitConnection = nu
       extension_present: vectorExtensionPresent,
       hnsw_index_count: hnswIndexes.length,
       gin_index_count: ginIndexes.length,
-      hnsw_indexes: hnswIndexes.map((row) => ({ tablename: row.tablename, indexname: row.indexname })),
-      gin_indexes: ginIndexes.map((row) => ({ tablename: row.tablename, indexname: row.indexname })),
+      hnsw_indexes: hnswIndexes.map((row) => ({
+        schemaname: row.schemaname,
+        tablename: row.tablename,
+        indexname: row.indexname,
+      })),
+      gin_indexes: ginIndexes.map((row) => ({
+        schemaname: row.schemaname,
+        tablename: row.tablename,
+        indexname: row.indexname,
+      })),
     },
     config: config.ok ? { ...config, rows: redactConfigRows(config.rows) } : config,
     extensions,
