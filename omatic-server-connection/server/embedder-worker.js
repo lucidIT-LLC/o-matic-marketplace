@@ -28,27 +28,62 @@ function vectorLiteral(vector) {
   return `[${vector.map((v) => Number(v).toFixed(8)).join(",")}]`;
 }
 
+function parseConfigValue(value) {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch (_) {
+    return value;
+  }
+}
+
+function isUndefinedTableError(error) {
+  return error?.code === "42P01" || /relation .* does not exist/i.test(error?.message || "");
+}
+
 async function getEmbeddingConfig(connections, name, tenant) {
+  let result;
+  try {
+    result = await connections.query(
+      name,
+      `
+        SELECT coalesce(json_object_agg(key, value), '{}'::json) AS config
+        FROM factory.factory_config
+        WHERE tenant_id = $1 AND category = 'embedding'
+      `,
+      [tenant]
+    );
+  } catch (error) {
+    if (!isUndefinedTableError(error)) throw error;
+    result = await connections.query(
+      name,
+      `
+        SELECT coalesce(json_object_agg(config_key, config_value), '{}'::json) AS config
+        FROM factory.config
+        WHERE category = 'embedding'
+      `
+    );
+  }
+  const raw = result.rows[0]?.config || {};
+  return Object.fromEntries(Object.entries(raw).map(([key, value]) => [key, parseConfigValue(value)]));
+}
+
+async function resolveSecretPointer(connections, name, tenant, value) {
+  if (typeof value !== "string" || !value.startsWith("factory.secrets:")) return value;
+  const secretKey = value.slice("factory.secrets:".length).trim();
+  if (!secretKey) return null;
   const result = await connections.query(
     name,
     `
-      SELECT coalesce(json_object_agg(key, value), '{}'::json) AS config
-      FROM factory.factory_config
-      WHERE tenant_id = $1 AND category = 'embedding'
+      SELECT secret_value
+      FROM factory.secrets
+      WHERE tenant_id = $1 AND secret_key = $2
+      ORDER BY updated_at DESC NULLS LAST, id DESC
+      LIMIT 1
     `,
-    [tenant]
+    [tenant, secretKey]
   );
-  const raw = result.rows[0]?.config || {};
-  return Object.fromEntries(
-    Object.entries(raw).map(([key, value]) => {
-      if (typeof value !== "string") return [key, value];
-      try {
-        return [key, JSON.parse(value)];
-      } catch (_) {
-        return [key, value];
-      }
-    })
-  );
+  return result.rows[0]?.secret_value || null;
 }
 
 async function fetchRows(connections, name, tenant, tier, limit) {
@@ -135,10 +170,11 @@ async function embedTier(connections, name, tenant, tier, apiKey, model, limit) 
 
 async function runOnce(connections, name, options) {
   const config = await getEmbeddingConfig(connections, name, options.tenant);
-  const apiKey = config.openai_api_key || process.env.OPENAI_API_KEY;
+  const configuredKey = await resolveSecretPointer(connections, name, options.tenant, config.openai_api_key);
+  const apiKey = process.env.OMATIC_OPENAI_API_KEY || process.env.OPENAI_API_KEY || configuredKey;
   const model = config.openai_embedding_model || DEFAULT_MODEL;
   if (!apiKey) {
-    throw new Error("No embedding API key found in factory.factory_config category='embedding' or OPENAI_API_KEY.");
+    throw new Error("No embedding API key found in OMATIC_OPENAI_API_KEY, OPENAI_API_KEY, factory.factory_config, or factory.config/factory.secrets.");
   }
 
   const semantic = await embedTier(connections, name, options.tenant, "semantic_index", apiKey, model, options.batchSize);
