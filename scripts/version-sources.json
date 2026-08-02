@@ -46,7 +46,7 @@
         },
         {
           "type": "regex",
-          "path": "omatic-server-connection/skills/omatic-server-connection/SKILL.md",
+          "path": "omatic-server-connection/skills/omatic-server-operating-guide/SKILL.md",
           "pattern": "<!--\\s*version:\\s*([^\\s|]+)",
           "label": "operating-guide SKILL.md header"
         },

@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.1.1 - 2026-08-02
+
+### Changed
+- **The operating-guide skill is renamed `omatic-server-operating-guide`.** It was
+  called `omatic-server-connection` — the same name as the MCP connector — so
+  host plugin pages listed "Omatic Server Connection" under **Skills**, directly
+  beneath the identically named entry under **MCP servers**, making the connector
+  look like it was filed as a skill. It was the only skill in this plugin named
+  after the package rather than its role; every other one (`data-o-matic-data`,
+  `orch-o-matic-probot`, `find-o-matic-fred`, `embed-o-matic-embedder`) is named
+  for what it does. The connector is the thing that connects; this is the guide
+  that explains how to drive it.
+- Invocation changes from `omatic-server-connection:omatic-server-connection` to
+  `omatic-server-connection:omatic-server-operating-guide`. No other content
+  changed.
+
 ## 3.1.0 - 2026-08-02
 
 ### Added
