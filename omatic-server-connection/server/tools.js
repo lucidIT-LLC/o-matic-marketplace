@@ -11,7 +11,6 @@ const {
   VALID_SSL_MODES,
 } = require("./connections.js");
 
-const RAW_TOOL_PREFIXES = ["postgres-cabinet-", "o-matic-server-"];
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_EMBEDDING_BASE_URL = "https://api.openai.com/v1";
 
@@ -22,8 +21,8 @@ function buildServerInstructions() {
     "For startup, prefer omatic_factory_startup_run. It opens the platform session, seeds readiness, records probes, warms retrieval, and returns the scoped startup packet.",
     "For memory, prefer omatic_search_memory with mode=auto. It uses pgvector hybrid retrieval when a query embedding is available and falls back to FTS when it is not.",
     "Use omatic_embedding_status before diagnosing retrieval or pgvector behavior.",
-    "Use guarded omatic_execute_sql for SQL work; set confirm_destructive=true only when the operator has approved a destructive statement.",
-    "Use per-connection variants such as omatic_factory_startup:factory-name only when intentionally pinning a specific configured factory.",
+    "Use guarded omatic_execute_sql for SQL work; set confirm_destructive=true only when the operator has approved a destructive statement. It is the only SQL path — the raw o-matic-server-* / postgres-cabinet-* execute_sql tools were removed in 3.0 because they bypassed the destructive-SQL guard.",
+    "Pinned variants exist for reads against another configured factory: omatic_execute_sql:name, omatic_search_memory:name, omatic_list_tasks:name. To move the whole session to a different factory, use omatic_select_factory or omatic_set_active_connection instead.",
   ].join("\n");
 }
 
@@ -46,26 +45,91 @@ function emitToolsChanged() {
   }
 }
 
-// ── Per-connection base tool variants ──
-// These base tool names accept a :connection-name suffix to pin the call to a
-// specific connection (e.g. omatic_factory_startup:selife). The unsuffixed
-// names continue to operate against the session's default connection.
+// ── Per-connection base tool variants (Factory 3.0 P1, issue #4 B8) ──
+//
+// A base tool may accept a :connection-name suffix to pin one call to one
+// configured connection (e.g. omatic_search_memory:kb) without disturbing the
+// session's active connection.
+//
+// This set was 14 entries, which fanned out to 14 x N tools. It is now the
+// three operations that genuinely need pinning — the ones whose entire meaning
+// is "which database", and which only read or run an explicitly-guarded
+// statement:
+//
+//   omatic_execute_sql    the sole SQL path now that the raw aliases are gone
+//   omatic_search_memory  querying shared/commons memory from a project session
+//   omatic_list_tasks     reading another factory's queue without switching
+//
+// Everything else was cut. Startup, health check, embedding status, decisions,
+// session events, probe results and work claims either anchor to the session's
+// own factory (so a pinned write is a cross-tenant footgun) or are independent
+// of the connection entirely (usage guide, factory resolution, which reads
+// folder context). Switching factories is what omatic_select_factory and
+// omatic_set_active_connection are for; pinning is for reads against another.
 const PER_CONNECTION_BASE_TOOLS = new Set([
-  "omatic_usage_guide",
-  "omatic_resolve_factory",
-  "omatic_factory_startup",
-  "omatic_factory_startup_run",
-  "omatic_factory_health_check",
-  "omatic_search_memory",
-  "omatic_embedding_status",
-  "omatic_list_tasks",
-  "omatic_record_decision",
-  "omatic_record_session_event",
-  "omatic_record_probe_result",
-  "omatic_claim_work",
-  "omatic_release_work",
   "omatic_execute_sql",
+  "omatic_search_memory",
+  "omatic_list_tasks",
 ]);
+
+// ── Model-visible tool-name budget (B8) ──
+//
+// Codex namespaces every MCP tool as `mcp__<server>__<tool>` with all
+// non-alphanumerics folded to `_`, enforces a 64-byte ceiling, and on overflow
+// SILENTLY truncates and appends a 12-hex-digit hash. That is the dangerous
+// part: the model then calls a mangled name, and two long names can collide
+// into one after truncation with nothing logged.
+//
+// The numbers below are measured, not assumed. Codex session logs for this very
+// server contain mangled names such as `postgres_cabinet_the_1db6bf5d370f` and
+// `omatic_factory_healt_487a90941544`: every one truncates the bare name to
+// exactly 20 bytes before the 13-byte `_<12 hex>` suffix, for a 33-byte total.
+// That pins the namespace cost at 64 - 33 = 31 bytes, which is exactly
+// `mcp__omatic_server_connection__` for the server name declared in index.js.
+const HOST_TOOL_NAME_LIMIT = 64;
+const HOST_TOOL_NAMESPACE = "mcp__omatic_server_connection__";
+const MAX_BARE_TOOL_NAME_BYTES = HOST_TOOL_NAME_LIMIT - HOST_TOOL_NAMESPACE.length; // 33
+
+// How a host renders one of our names once it has sanitized and namespaced it.
+function hostVisibleToolName(name) {
+  return `${HOST_TOOL_NAMESPACE}${String(name).replace(/[^A-Za-z0-9_]/g, "_")}`;
+}
+
+function toolNameByteLength(name) {
+  return Buffer.byteLength(String(name), "utf8");
+}
+
+function toolNameFits(name) {
+  return toolNameByteLength(name) <= MAX_BARE_TOOL_NAME_BYTES;
+}
+
+// Structural guard: the tool list must never contain a name that the host will
+// mangle, and must never contain two names that collide after the host folds
+// `:` and `-` into `_`. Both are silent failures at the host, so we make them
+// loud here. Throwing is correct — an ambiguous tool surface is worse than no
+// tool surface, and buildToolList is the only producer.
+function assertToolNamesSafe(tools) {
+  const seen = new Map();
+  for (const entry of tools) {
+    const bare = entry.name;
+    if (!toolNameFits(bare)) {
+      throw new Error(
+        `Tool name "${bare}" is ${toolNameByteLength(bare)} bytes; the host budget is ${MAX_BARE_TOOL_NAME_BYTES} ` +
+          `(${HOST_TOOL_NAME_LIMIT} minus the ${HOST_TOOL_NAMESPACE.length}-byte "${HOST_TOOL_NAMESPACE}" namespace). ` +
+          "It would be silently truncated and hashed by the host."
+      );
+    }
+    const visible = hostVisibleToolName(bare);
+    if (seen.has(visible)) {
+      throw new Error(
+        `Tool names "${seen.get(visible)}" and "${bare}" both render as "${visible}" once the host ` +
+          "folds non-alphanumerics to underscore. One would silently shadow the other."
+      );
+    }
+    seen.set(visible, bare);
+  }
+  return tools;
+}
 
 function parseBaseToolName(name) {
   const colonIdx = name.lastIndexOf(":");
@@ -75,28 +139,6 @@ function parseBaseToolName(name) {
   if (!PER_CONNECTION_BASE_TOOLS.has(base)) return null;
   if (!conn || !NAME_PATTERN.test(conn)) return null;
   return { base, connection: conn };
-}
-
-function legacyToolName(connectionName) {
-  return `postgres-cabinet-${connectionName}:execute_sql`;
-}
-
-function modernToolName(connectionName) {
-  return `o-matic-server-${connectionName}:execute_sql`;
-}
-
-function parseLegacyToolName(name) {
-  for (const prefix of RAW_TOOL_PREFIXES) {
-    if (!name.startsWith(prefix)) continue;
-    const rest = name.slice(prefix.length);
-    const sep = rest.lastIndexOf(":");
-    if (sep === -1) continue;
-    const connection = rest.slice(0, sep);
-    const action = rest.slice(sep + 1);
-    if (action !== "execute_sql") continue;
-    return { connection, action };
-  }
-  return null;
 }
 
 // ── Per-request outcome collector (Factory 3.0 P0, issue #4 section A) ──
@@ -293,6 +335,57 @@ function queryRows(queryResult) {
 // never "clean", "OK", "GREEN", or 0. (issue #4 A4)
 const UNKNOWN = "UNKNOWN";
 
+// ── View-formatter column contract (Factory 3.0 P1, issue #4 A12) ──
+//
+// A formatter used to reach for `row.connector_name` while `v_mcp_readiness`
+// exposes `connector_id`, so every degraded connector rendered as "connector ?".
+// The bug was invisible because the access was an `||` chain of guesses: when
+// every guess misses, a fallback string is indistinguishable from real data.
+//
+// The columns each startup source actually exposes are now declared here, and
+// formatters read through viewField(), which resolves ONLY the declared column.
+// A missing declared column renders UNKNOWN — the same contract A4 already
+// applies to unreadable sources — instead of quietly degrading to "?" or "0".
+const VIEW_COLUMNS = {
+  // SELECT * FROM v_mcp_readiness / v_mcp_readiness_by_session
+  readiness: ["connector_id", "status_label", "probe_result"],
+  // SELECT * FROM v_embedding_health
+  embedding: ["stale", "unembedded"],
+  // SELECT * FROM v_startup_summary
+  summary: [
+    "governance_health",
+    "sop_index",
+    "p1_tasks",
+    "open_task_total",
+    "open_tasks",
+    "resume_notes",
+    "last_resume_notes",
+    "last_summary",
+    "last_session_id",
+    "platform",
+  ],
+  // SELECT * FROM public.v_agent_agreement
+  agreements: ["agent_name", "status_label", "agreement_version"],
+  // SELECT id, enforcement, rule FROM v_startup_rules
+  rules: ["id", "enforcement", "rule"],
+};
+
+// Read one declared column off a view row. `source` keys into VIEW_COLUMNS, so
+// a typo or an undeclared column throws at development time rather than
+// rendering a plausible-looking fallback in production.
+function viewField(source, row, column, fallback = UNKNOWN) {
+  const declared = VIEW_COLUMNS[source];
+  if (!declared) throw new Error(`viewField: unknown view source "${source}".`);
+  if (!declared.includes(column)) {
+    throw new Error(
+      `viewField: column "${column}" is not declared for view source "${source}". ` +
+        `Declared: ${declared.join(", ")}. Update VIEW_COLUMNS if the view really changed.`
+    );
+  }
+  const value = row ? row[column] : undefined;
+  return value === undefined || value === null || value === "" ? fallback : value;
+}
+
 function sourceOk(queryResult) {
   return Boolean(queryResult && queryResult.ok === true);
 }
@@ -324,14 +417,17 @@ function formatStartupView(payload) {
   const agreements = queryRows(startup.agreements);
   const loadedSkills = Array.isArray(startup.loaded_skills) ? startup.loaded_skills : [];
   const embeddingRows = queryRows(startup.embedding);
-  const governance = summary.governance_health || {};
-  const sopIndex = Array.isArray(summary.sop_index) ? summary.sop_index : [];
-  const p1Tasks = Array.isArray(summary.p1_tasks) ? summary.p1_tasks : [];
+  const governance = viewField("summary", summary, "governance_health", null) || {};
+  const sopIndexRaw = viewField("summary", summary, "sop_index", null);
+  const sopIndex = Array.isArray(sopIndexRaw) ? sopIndexRaw : [];
+  const p1TasksRaw = viewField("summary", summary, "p1_tasks", null);
+  const p1Tasks = Array.isArray(p1TasksRaw) ? p1TasksRaw : [];
   const session = payload.session || {};
   const identity = payload.identity || {};
   const factory = payload.factory || {};
-  const sessionId = session.id || summary.last_session_id || payload.session_id || "unknown";
-  const platform = session.platform || summary.platform || factory.platform_profile || "unknown";
+  const sessionId = session.id || viewField("summary", summary, "last_session_id", null) || payload.session_id || "unknown";
+  const platform =
+    session.platform || viewField("summary", summary, "platform", null) || factory.platform_profile || "unknown";
   const dbName = identity.db_name || "unknown-db";
   const dbUser = identity.db_user || "unknown-user";
   // Source availability gates every derived fact below. A missing relation
@@ -341,12 +437,12 @@ function formatStartupView(payload) {
   const embeddingOk = sourceOk(startup.embedding);
   const agreementsOk = sourceOk(startup.agreements);
 
-  const openTaskTotal = summaryOk ? summary.open_task_total || "0" : UNKNOWN;
-  const readyAgreements = agreements.filter((row) => row.status_label === "READY").length;
-  const connectorOk = readiness.filter((row) => row.status_label === "OK").length;
+  const openTaskTotal = summaryOk ? viewField("summary", summary, "open_task_total", "0") : UNKNOWN;
+  const readyAgreements = agreements.filter((row) => viewField("agreements", row, "status_label", null) === "READY").length;
+  const connectorOk = readiness.filter((row) => viewField("readiness", row, "status_label", null) === "OK").length;
   const connectorTotal = readiness.length;
-  const staleEmbedding = embeddingRows.reduce((total, row) => total + asNumber(row.stale), 0);
-  const unembedded = embeddingRows.reduce((total, row) => total + asNumber(row.unembedded), 0);
+  const staleEmbedding = embeddingRows.reduce((total, row) => total + asNumber(viewField("embedding", row, "stale", 0)), 0);
+  const unembedded = embeddingRows.reduce((total, row) => total + asNumber(viewField("embedding", row, "unembedded", 0)), 0);
   const ruleCount = asNumber(governance.active_rule_count);
   const ruleTarget = asNumber(governance.rule_count_target);
   const combinedTarget = asNumber(governance.combined_governance_target);
@@ -377,7 +473,7 @@ function formatStartupView(payload) {
     ? `${staleEmbedding === 0 && unembedded === 0 ? "clean" : "attention needed"} | stale ${staleEmbedding} | unembedded ${unembedded}`
     : `${UNKNOWN} | stale ${UNKNOWN} | unembedded ${UNKNOWN}`;
   const workloadLabel = summaryOk
-    ? `${openTaskTotal} open ${plural(openTaskTotal, "task")} | ${formatCountMap(summary.open_tasks)}`
+    ? `${openTaskTotal} open ${plural(openTaskTotal, "task")} | ${formatCountMap(viewField("summary", summary, "open_tasks", null))}`
     : `${UNKNOWN} (startup summary query failed)`;
   const rosterUnknown = !agreementsOk;
   const skillNames = loadedSkills.map((row) => row.agent_name).filter(Boolean);
@@ -427,7 +523,11 @@ function formatStartupView(payload) {
     ...(!readinessOk
       ? [`FAIL connector readiness ${UNKNOWN}: ${sourceError(startup.readiness)}`]
       : readiness.length
-        ? readiness.map((row) => `${statusIcon(row.status_label)} ${row.connector_id}: ${row.status_label || row.probe_result || "unknown"}`)
+        ? readiness.map((row) => {
+            const label = viewField("readiness", row, "status_label", null);
+            const state = label || viewField("readiness", row, "probe_result", UNKNOWN);
+            return `${statusIcon(label)} ${viewField("readiness", row, "connector_id")}: ${state}`;
+          })
         : ["INFO no connector readiness rows returned"])
   );
 
@@ -439,7 +539,8 @@ function formatStartupView(payload) {
     if (p1Tasks.length > 8) lines.push(`...and ${p1Tasks.length - 8} more P1 ${plural(p1Tasks.length - 8, "task")}`);
   }
 
-  const resumeNotes = summary.resume_notes || (payload.session && payload.session.resume_notes);
+  const resumeNotes =
+    viewField("summary", summary, "resume_notes", null) || (payload.session && payload.session.resume_notes);
   if (resumeNotes) {
     lines.push("", `Resume: ${resumeNotes}`);
   }
@@ -727,7 +828,7 @@ function buildToolList(connections) {
           probes: {
             type: "array",
             description:
-              "Optional caller-observed connector probe results to record after seeding.",
+              "Optional caller-observed connector probe results. These are ECHOED BACK as asserted_probes with source=\"caller_asserted\" and recorded=false — they are NOT written to mcp_registry.probe_status, because that table records probes this plugin measured, not claims. To record a probe you actually performed, call omatic_record_probe_result.",
             items: {
               type: "object",
               properties: {
@@ -775,7 +876,9 @@ function buildToolList(connections) {
     tool({
       name: "omatic_search_memory",
       description:
-        "Search O-Matic semantic and document memory for the active factory. mode=auto uses pgvector hybrid retrieval when a query embedding is available and safely falls back to FTS.",
+        "Search O-Matic semantic and document memory for the active factory. mode=auto uses pgvector hybrid retrieval when a query embedding is available and falls back to FTS. " +
+        "WRITES ON EVERY CALL: this tool is not read-only — it records one retrieval-telemetry row via fn_record_retrieval_event (query text, whether a vector was used, the returned result ids, and latency) for each invocation. " +
+        "Any call that runs without a query vector returns outcome=\"degraded\" with a reason naming the missing vector, because keyword-only retrieval finding nothing is not the same fact as semantic retrieval finding nothing.",
       inputSchema: {
         type: "object",
         properties: {
@@ -933,7 +1036,8 @@ function buildToolList(connections) {
         properties: {
           name: {
             type: "string",
-            description: "Connection name — becomes the tool namespace (o-matic-server-{name}). Lowercase letters, numbers, hyphens.",
+            description:
+              "Connection name. Becomes the pinned-variant suffix (omatic_execute_sql:{name}). Lowercase letters, numbers, hyphens. Keep it short — a long name pushes pinned tool names past this host's tool-name budget, and those variants are then not published.",
           },
           database_url: {
             type: "string",
@@ -946,7 +1050,8 @@ function buildToolList(connections) {
           password: { type: "string", description: "Database password." },
           ssl_mode: {
             type: "string",
-            description: "SSL mode: disable, require, verify-ca, verify-full. Default inferred from host.",
+            description:
+              "SSL mode: disable, require, verify-ca, verify-full. Defaults to require. Never inferred from the host address — state it explicitly when the target needs something other than require.",
           },
           test: {
             type: "boolean",
@@ -980,7 +1085,7 @@ function buildToolList(connections) {
     tool({
       name: "omatic_set_active_connection",
       description:
-        "Switch the session's active O-Matic Server connection without restarting. Subsequent unsuffixed base tools (omatic_factory_startup, omatic_execute_sql, etc.) target this connection until another switch. Per-connection variants (omatic_factory_startup:{name}) always target their pinned connection regardless of this setting. This is a between-task operation — switching mid-flow (during a multi-call sequence like factory startup) can cause cross-tenant query results. Switch between distinct task contexts.",
+        "Switch the session's active O-Matic Server connection without restarting. Subsequent unsuffixed base tools (omatic_factory_startup, omatic_execute_sql, etc.) target this connection until another switch. This is also how you reach a connection with the tools that have no pinned variant — startup, health check, embedding status, and the record_* writers all follow the active connection. The three pinned families (omatic_execute_sql:{name}, omatic_search_memory:{name}, omatic_list_tasks:{name}) always target their pinned connection regardless of this setting. This is a between-task operation — switching mid-flow (during a multi-call sequence like factory startup) can cause cross-tenant query results. Switch between distinct task contexts.",
       inputSchema: {
         type: "object",
         properties: {
@@ -997,46 +1102,57 @@ function buildToolList(connections) {
     description: `${entry.description} Active factory: ${project.factory_id}.`,
   }));
 
-  const rawSqlTools = connections.names().flatMap((name) => {
-    const cfg = connections.getConfig(name);
-    const sqlSchema = {
-      type: "object",
-      properties: {
-        sql: { type: "string", description: "SQL statement to execute." },
-      },
-      required: ["sql"],
-      additionalProperties: false,
-    };
-    return [
-      {
-        name: modernToolName(name),
-        description: `Raw SQL tool for ${name} PostgreSQL (${cfg.database} @ ${cfg.host}:${cfg.port}).`,
-        inputSchema: sqlSchema,
-      },
-      {
-        name: legacyToolName(name),
-        description: `Legacy alias of ${modernToolName(name)} — retained for backward compatibility.`,
-        inputSchema: sqlSchema,
-      },
-    ];
-  });
+  // J1/A10: the raw `o-matic-server-{name}:execute_sql` and
+  // `postgres-cabinet-{name}:execute_sql` tools are gone. They were two aliases
+  // per connection for a handler invoked with guardDestructive=false — the one
+  // door in the codebase through which `DELETE FROM tasks` reached the database
+  // without confirm_destructive. Their replacement is omatic_execute_sql, and
+  // omatic_execute_sql:{name} for a pinned connection, both of which are
+  // guarded. Removing them deletes 2 x N tools and the bypass together.
 
   // Per-connection variants of base tools — pin a base tool call to a
   // specific configured connection regardless of the session's active default.
+  //
+  // B8: a pinned name is `${base}:${connName}`, and connection names are
+  // operator-chosen and unbounded. A name over the host budget would be
+  // silently truncated and hashed, so it is omitted rather than emitted
+  // mangled — the unsuffixed tool plus omatic_set_active_connection always
+  // covers the same ground. Omissions are disclosed on the base tool itself so
+  // the absence is visible in the tool surface rather than mysterious.
   const perConnectionTools = [];
+  const omittedByName = new Map();
   for (const connName of connections.names()) {
     for (const baseTool of baseTools) {
       if (!PER_CONNECTION_BASE_TOOLS.has(baseTool.name)) continue;
+      const pinnedName = `${baseTool.name}:${connName}`;
+      if (!toolNameFits(pinnedName)) {
+        if (!omittedByName.has(baseTool.name)) omittedByName.set(baseTool.name, []);
+        omittedByName.get(baseTool.name).push(connName);
+        continue;
+      }
       const cfg = connections.getConfig(connName);
       perConnectionTools.push({
         ...baseTool,
-        name: `${baseTool.name}:${connName}`,
+        name: pinnedName,
         description: `${baseTool.description} Pinned connection: ${connName} (${cfg.database} @ ${cfg.host}).`,
       });
     }
   }
 
-  return baseToolDescriptions.concat(rawSqlTools).concat(perConnectionTools);
+  const disclosed = baseToolDescriptions.map((entry) => {
+    const omitted = omittedByName.get(entry.name);
+    if (!omitted || !omitted.length) return entry;
+    return {
+      ...entry,
+      description:
+        `${entry.description} No pinned variant is published for ${omitted.join(", ")} — ` +
+        `the resulting tool name exceeds this host's ${MAX_BARE_TOOL_NAME_BYTES}-byte budget. ` +
+        "Use omatic_set_active_connection to target those connections.",
+    };
+  });
+
+  // Fail loudly here rather than let the host truncate or shadow a name.
+  return assertToolNamesSafe(disclosed.concat(perConnectionTools));
 }
 
 function connectionName(connections) {
@@ -1177,10 +1293,10 @@ async function handleStartup(connections, args, explicitConnection = null) {
       agreements,
       loaded_skills: agreements.ok
         ? agreements.rows
-            .filter((row) => row.status_label === "READY")
+            .filter((row) => viewField("agreements", row, "status_label", null) === "READY")
             .map((row) => ({
-              agent_name: row.agent_name,
-              agreement_version: row.agreement_version,
+              agent_name: viewField("agreements", row, "agent_name", null),
+              agreement_version: viewField("agreements", row, "agreement_version", null),
               factory_mode: row.agent_name && ["brandy", "carver", "data", "fred", "monet", "probot"].includes(row.agent_name)
                 ? "always_on_core_roster"
                 : "loaded_opt_in_lane",
@@ -1253,7 +1369,7 @@ function formatFastStartupView(payload) {
   const summary = firstStartupSummary(startup);
   const readiness = queryRows(startup.readiness);
   const embeddingRows = queryRows(startup.embedding);
-  const governance = summary.governance_health || {};
+  const governance = viewField("summary", summary, "governance_health", null) || {};
   const session = payload.session || {};
   const identity = payload.identity || {};
   const factory = payload.factory || {};
@@ -1274,8 +1390,12 @@ function formatFastStartupView(payload) {
     unknowns.push(`${UNKNOWN}: connector readiness unreadable — ${sourceError(startup.readiness)}`);
   } else {
     for (const row of readiness) {
-      if (row.status_label && row.status_label !== "OK") {
-        redYellow.push(`${row.status_label}: connector ${row.connector_id || row.connector_name || row.name || row.connector || "?"}`);
+      // A12: read the column v_mcp_readiness actually exposes. This was
+      // `row.connector_name`, which the view has never had, so every degraded
+      // connector rendered as "connector ?".
+      const label = viewField("readiness", row, "status_label", null);
+      if (label && label !== "OK") {
+        redYellow.push(`${label}: connector ${viewField("readiness", row, "connector_id")}`);
       }
     }
   }
@@ -1283,8 +1403,8 @@ function formatFastStartupView(payload) {
   if (!embeddingOk) {
     unknowns.push(`${UNKNOWN}: embedding health unreadable — ${sourceError(startup.embedding)}`);
   } else {
-    const stale = embeddingRows.reduce((total, row) => total + asNumber(row.stale), 0);
-    const unembedded = embeddingRows.reduce((total, row) => total + asNumber(row.unembedded), 0);
+    const stale = embeddingRows.reduce((total, row) => total + asNumber(viewField("embedding", row, "stale", 0)), 0);
+    const unembedded = embeddingRows.reduce((total, row) => total + asNumber(viewField("embedding", row, "unembedded", 0)), 0);
     if (stale || unembedded) redYellow.push(`WARN: embeddings ${stale} stale / ${unembedded} unembedded`);
   }
 
@@ -1298,8 +1418,11 @@ function formatFastStartupView(payload) {
 
   const resume = !summaryOk
     ? session.resume_notes || `${UNKNOWN} — resume point unreadable`
-    : session.resume_notes || summary.last_resume_notes || summary.last_summary || "no resume point recorded";
-  const openTasks = summaryOk ? summary.open_task_total || "0" : UNKNOWN;
+    : session.resume_notes ||
+      viewField("summary", summary, "last_resume_notes", null) ||
+      viewField("summary", summary, "last_summary", null) ||
+      "no resume point recorded";
+  const openTasks = summaryOk ? viewField("summary", summary, "open_task_total", "0") : UNKNOWN;
 
   const items = unknowns.concat(redYellow);
   const lines = [];
@@ -1365,17 +1488,29 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     explicitConnection
   );
 
+  // ── A6: measured probes are recorded; asserted probes are not ──
+  //
+  // The startup runner used to concatenate caller-supplied probes[] onto its own
+  // built-in probe and push the whole list through fn_record_probe_result, which
+  // writes mcp_registry.probe_status. That let a model's *claim* about a
+  // connector it never touched become the factory's authoritative readiness
+  // record, indistinguishable from a measurement.
+  //
+  // Only probes backed by I/O this plugin actually performed this session are
+  // promoted. The built-in postgres probe qualifies: the INSERT and seed calls
+  // above are that I/O. Caller-supplied probes are echoed back labelled
+  // source:"caller_asserted" with recorded:false, and never reach the registry.
+  // A model that genuinely measured a connector can still record it explicitly
+  // through omatic_record_probe_result.
   const probeResults = [];
-  const builtInProbes = [
+  const measuredProbes = [
     {
       connector_name: "postgres-omatic",
       status: "connected",
       note: "Startup runner: database query path verified",
     },
   ];
-  const callerProbes = Array.isArray(args.probes) ? args.probes : [];
-  for (const probe of builtInProbes.concat(callerProbes)) {
-    if (!probe || !probe.connector_name || !probe.status) continue;
+  for (const probe of measuredProbes) {
     const result = await q(
       connections,
       "SELECT fn_record_probe_result($1, $2, $3, $4) AS result",
@@ -1385,7 +1520,23 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     probeResults.push({
       connector_name: probe.connector_name,
       status: probe.status,
+      source: "plugin_measured",
+      recorded: true,
       result: result.rows[0] || null,
+    });
+  }
+
+  const assertedProbes = [];
+  for (const probe of Array.isArray(args.probes) ? args.probes : []) {
+    if (!probe || !probe.connector_name || !probe.status) continue;
+    assertedProbes.push({
+      connector_name: probe.connector_name,
+      status: probe.status,
+      note: probe.note || null,
+      source: "caller_asserted",
+      recorded: false,
+      reason:
+        "Caller-asserted probe. Not written to mcp_registry.probe_status — that table records measurements this plugin performed, not claims. Use omatic_record_probe_result to record a probe you actually ran.",
     });
   }
 
@@ -1466,6 +1617,7 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     session,
     seeded: seed.rows[0] ? seed.rows[0].seeded : null,
     probe_results: probeResults,
+    asserted_probes: assertedProbes,
     brain_warm: brain.ok
       ? { ok: true, query: brainQuery, mode: brainMode, hits: brain.count }
       : { ok: false, query: brainQuery, mode: brainMode, error: brain.error },
@@ -1564,6 +1716,27 @@ async function handleSearchMemory(connections, args, explicitConnection = null) 
 
   const retrievalMode = vectorLiteral ? "hybrid_pgvector" : "fts_only";
 
+  // ── F1 amendment: FTS-only is always degraded (Probot ruling on PR #14) ──
+  //
+  // P0 left this alone on the reasoning that a *declared* fallback is not a
+  // hidden failure. Overruled, and correctly: the defect this release exists to
+  // remove was FTS-only returning zero and reading clean. A caller holding an
+  // empty result set cannot tell "keyword search found nothing" from "semantic
+  // search found nothing", and those mean very different things.
+  //
+  // The marker is about which retrieval actually ran, so hit count is
+  // irrelevant, and mode="fts" is marked too — an explicit request still
+  // produces a response the caller cannot distinguish from a silent fallback.
+  // recordUnavailable() drives outcome=degraded through the existing P0
+  // collector: no new state, no new field.
+  if (!vectorLiteral) {
+    currentOutcome().recordUnavailable(
+      "pgvector_hybrid_retrieval",
+      `no query vector was available, so retrieval ran FTS-only (requested mode=${mode})` +
+        (embeddingInfo.fallback_reason ? `: ${embeddingInfo.fallback_reason}` : "")
+    );
+  }
+
   const semantic = await optionalQuery(
     connections,
     `SELECT *
@@ -1601,7 +1774,7 @@ async function handleSearchMemory(connections, args, explicitConnection = null) 
     embedding: embeddingInfo,
     note: vectorLiteral
       ? "Query embedding supplied to pgvector search functions for hybrid retrieval."
-      : "No query embedding was available; search used the DB functions with NULL::vector for FTS-backed fallback.",
+      : "No query embedding was available; search used the DB functions with NULL::vector for FTS-backed retrieval. This response is marked degraded: these hits (or their absence) reflect keyword matching only, not semantic similarity.",
     semantic,
     documents,
     telemetry,
@@ -1895,10 +2068,14 @@ async function handleReleaseWork(connections, args, explicitConnection = null) {
   return successResponse({ available: true, released: result.rows, count: result.count });
 }
 
-async function handleSql(connections, args, explicitConnection = null, guardDestructive = true) {
+// A10 — one guard, no bypass door. The `guardDestructive` parameter is gone
+// rather than merely defaulted to true: while it existed, the bypass was one
+// argument away, and the deleted raw-SQL dispatch passed exactly that argument.
+// The guard is now unconditional and structurally unreachable to disable.
+async function handleSql(connections, args, explicitConnection = null) {
   const sql = args && typeof args.sql === "string" ? args.sql : null;
   if (!sql) return errorResponse("Missing required argument: sql");
-  if (guardDestructive && isDestructiveSql(sql) && args.confirm_destructive !== true) {
+  if (isDestructiveSql(sql) && args.confirm_destructive !== true) {
     return errorResponse("Destructive SQL requires confirm_destructive=true.");
   }
   const verified = await verifyFactoryContext(connections, explicitConnection);
@@ -1930,9 +2107,14 @@ function buildConnEntryFromArgs(args) {
   }
 
   if (args.host && args.database && args.user) {
-    const sslMode = (
-      args.ssl_mode || (String(args.host).startsWith("100.") ? "disable" : "require")
-    ).toLowerCase();
+    // D5: sslmode is explicit transport policy, never inferred. This used to
+    // read `String(args.host).startsWith("100.") ? "disable" : "require"` —
+    // guessing that a Tailscale CGNAT address meant TLS could be dropped. A
+    // host address is not a statement about transport security, an attacker
+    // who can pick the host can pick the security level, and the same 100.64/10
+    // range is routable by anyone. The operator states the mode or takes the
+    // secure default; a wrong default fails loudly at the connection test.
+    const sslMode = String(args.ssl_mode || "require").toLowerCase();
     if (!VALID_SSL_MODES.has(sslMode)) {
       throw new Error(`Invalid ssl_mode "${sslMode}". Allowed: ${[...VALID_SSL_MODES].join(", ")}.`);
     }
@@ -2090,7 +2272,7 @@ async function handleSetActiveConnection(connections, args) {
     action: "set_active",
     active_connection: target,
     note:
-      "Active connection switched for this session. Unsuffixed base tools (omatic_factory_startup, omatic_execute_sql, etc.) now target this connection. Per-connection variants (e.g. omatic_factory_startup:other) still target their pinned connection.",
+      "Active connection switched for this session. Unsuffixed base tools (omatic_factory_startup, omatic_execute_sql, etc.) now target this connection. The pinned variants (omatic_execute_sql:other, omatic_search_memory:other, omatic_list_tasks:other) still target their own connection.",
   });
 }
 
@@ -2115,12 +2297,12 @@ async function dispatchToolCall(connections, name, args) {
 }
 
 async function routeToolCall(connections, name, args) {
-  // Raw SQL tools — postgres-cabinet-{name}:execute_sql and
-  // o-matic-server-{name}:execute_sql — bypass destructive guard.
-  const legacy = parseLegacyToolName(name);
-  if (legacy) return handleSql(connections, args || {}, legacy.connection, false);
+  // A10: there is no longer a raw-SQL branch here. The removed
+  // postgres-cabinet-*/o-matic-server-* dispatch called handleSql with
+  // guardDestructive=false, which was the only bypass of the destructive-SQL
+  // confirmation. Every SQL path now runs through the guarded handler below.
 
-  // Per-connection base tool variant — e.g. omatic_factory_startup:selife.
+  // Per-connection base tool variant — e.g. omatic_search_memory:kb.
   const perConn = parseBaseToolName(name);
   const targetName = perConn ? perConn.base : name;
   const explicitConnection = perConn ? perConn.connection : null;
@@ -2177,9 +2359,6 @@ async function routeToolCall(connections, name, args) {
 
 module.exports = {
   buildServerInstructions,
-  legacyToolName,
-  modernToolName,
-  parseLegacyToolName,
   parseBaseToolName,
   buildToolList,
   handleToolCall,
@@ -2196,5 +2375,14 @@ module.exports = {
     currentOutcome,
     successResponse,
     errorResponse,
+    // P1 tool surface (issue #4 A12, B8).
+    viewField,
+    VIEW_COLUMNS,
+    assertToolNamesSafe,
+    hostVisibleToolName,
+    toolNameFits,
+    MAX_BARE_TOOL_NAME_BYTES,
+    HOST_TOOL_NAME_LIMIT,
+    HOST_TOOL_NAMESPACE,
   },
 };
