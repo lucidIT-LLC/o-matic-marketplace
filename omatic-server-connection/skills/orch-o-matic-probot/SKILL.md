@@ -115,7 +115,7 @@ All governance rules, routing, scope, connectors, and SOPs live in the factory D
 - `omatic_execute_sql` — guarded SQL for queries without a first-class tool
 - `omatic_list_connections` / `omatic_add_connection` / `omatic_remove_connection` / `omatic_set_active_connection` — connection CRUD (Fred owns most CRUD; Probot reads `omatic_list_connections` to enumerate multi-factory setups)
 
-**Per-connection variants:** Every base tool above accepts a `:connection-name` suffix to pin the call to a specific factory in multi-factory setups. Example: `omatic_factory_startup:selife` runs startup against the selife connection regardless of the session's active default.
+**Per-connection variants:** A small set of base tools accepts a `:connection-name` suffix to pin the call to a specific factory in multi-factory setups — `omatic_execute_sql`, `omatic_search_memory`, and `omatic_factory_startup_run`. Example: `omatic_search_memory:kb` queries commons regardless of the session's active default. Every other tool follows the active connection; switch it with `omatic_set_active_connection` or pin the factory with `omatic_select_factory`. The full pinned surface was cut from 70 tools to 15 in 3.0 — Codex silently truncates names past 64 bytes, and 22 of ours were being mangled.
 
 **Active connection switch:** `omatic_set_active_connection` retargets unsuffixed base tools for the session. Probot treats this as a **between-task** operation only — never invoked during a multi-call sequence (startup, audit, close) because mid-flow switches cause cross-tenant query bleed.
 
