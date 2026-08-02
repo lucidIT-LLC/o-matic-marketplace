@@ -1,3 +1,4 @@
+const { AsyncLocalStorage } = require("node:async_hooks");
 const {
   readFactoryConfig,
   normalizeFactoryConnections,
@@ -98,6 +99,120 @@ function parseLegacyToolName(name) {
   return null;
 }
 
+// ── Per-request outcome collector (Factory 3.0 P0, issue #4 section A) ──
+// The old contract could not express partial failure: optionalQuery() degraded
+// an exception to a value, and successResponse() had no way to learn that
+// happened. Every response now carries a three-state `outcome` derived from a
+// collector that optionalQuery/q write into, so a clean result is structurally
+// unreachable once any constituent query has errored.
+//
+// AsyncLocalStorage (Node core, no new dependency) scopes one collector per
+// tool call, so concurrent requests on the same stdio server cannot bleed into
+// each other's outcome.
+
+const OUTCOME_COMPLETE = "complete";
+const OUTCOME_DEGRADED = "degraded";
+const OUTCOME_FAILED = "failed";
+const VALID_OUTCOMES = new Set([OUTCOME_COMPLETE, OUTCOME_DEGRADED, OUTCOME_FAILED]);
+const RESERVED_OUTCOME_KEYS = ["success", "outcome", "degraded_reasons", "results_trustworthy"];
+
+const outcomeStore = new AsyncLocalStorage();
+
+function compactSql(sql) {
+  const flat = String(sql || "").replace(/\s+/g, " ").trim();
+  return flat.length > 140 ? `${flat.slice(0, 137)}...` : flat;
+}
+
+class OutcomeCollector {
+  constructor() {
+    this.failures = [];
+    this.unavailable = [];
+    this.okQueryCount = 0;
+    this.rowsObserved = 0;
+    this.fatal = false;
+  }
+
+  // A constituent query threw. Record the SQL context and the error text —
+  // returning { ok: false } to one caller is not enough, nothing forces a
+  // caller to look at it.
+  recordQueryFailure(sql, error, connection = null) {
+    this.failures.push({
+      sql: compactSql(sql),
+      error: error && error.message ? error.message : String(error),
+      connection: connection || null,
+    });
+  }
+
+  recordQuerySuccess(rowCount = 0) {
+    this.okQueryCount += 1;
+    this.rowsObserved += asNumber(rowCount, 0);
+  }
+
+  // A capability the tool advertises could not be exercised at all (missing
+  // table, absent extension, unconfigured provider). Not an error, but it is
+  // never `complete` either.
+  recordUnavailable(capability, reason) {
+    this.unavailable.push({ capability: String(capability), reason: String(reason || "unavailable") });
+  }
+
+  markFatal(reason) {
+    this.fatal = true;
+    if (reason) this.failures.push({ sql: null, error: String(reason), connection: null });
+  }
+
+  reasons() {
+    return [
+      ...this.failures.map((f) =>
+        f.sql
+          ? `query failed${f.connection ? ` on ${f.connection}` : ""} [${f.sql}]: ${f.error}`
+          : `failure: ${f.error}`
+      ),
+      ...this.unavailable.map((u) => `capability unavailable [${u.capability}]: ${u.reason}`),
+    ];
+  }
+
+  outcome() {
+    if (this.fatal) return OUTCOME_FAILED;
+    if (this.failures.length === 0 && this.unavailable.length === 0) return OUTCOME_COMPLETE;
+    // Nothing readable came back — this is not a partial answer, it is no answer.
+    if (this.failures.length > 0 && this.okQueryCount === 0) return OUTCOME_FAILED;
+    return OUTCOME_DEGRADED;
+  }
+
+  summarize() {
+    const outcome = this.outcome();
+    const degraded_reasons = this.reasons();
+    // Internal invariant: a clean outcome and a non-empty reason list must
+    // never coexist. If this throws, the collector wiring is wrong and the
+    // caller gets an error rather than a comfortable lie.
+    if (outcome === OUTCOME_COMPLETE && degraded_reasons.length > 0) {
+      throw new Error(
+        `Outcome invariant violated: outcome="complete" with ${degraded_reasons.length} degraded reason(s).`
+      );
+    }
+    if (!VALID_OUTCOMES.has(outcome)) {
+      throw new Error(`Outcome invariant violated: unknown outcome "${outcome}".`);
+    }
+    return {
+      outcome,
+      degraded_reasons,
+      // "No rows" is only trustworthy when nothing was degraded. An empty array
+      // produced by a missing relation must never read as a clean zero.
+      results_trustworthy: outcome === OUTCOME_COMPLETE ? true : this.rowsObserved > 0,
+    };
+  }
+}
+
+// Never returns null: helpers called outside a tool-call scope (direct unit
+// tests, future callers) get a throwaway collector that reports `complete`.
+function currentOutcome() {
+  return outcomeStore.getStore() || new OutcomeCollector();
+}
+
+function runWithOutcome(fn) {
+  return outcomeStore.run(new OutcomeCollector(), fn);
+}
+
 function jsonResponse(payload, isError = false) {
   return {
     content: [
@@ -110,12 +225,44 @@ function jsonResponse(payload, isError = false) {
   };
 }
 
-function errorResponse(message, extra = {}) {
-  return jsonResponse({ success: false, error: message, ...extra }, true);
+function stripReservedOutcomeKeys(data) {
+  const out = { ...(data || {}) };
+  for (const key of RESERVED_OUTCOME_KEYS) delete out[key];
+  return out;
 }
 
+function errorResponse(message, extra = {}) {
+  const collector = currentOutcome();
+  const reasons = collector.reasons();
+  return jsonResponse(
+    {
+      success: false,
+      outcome: OUTCOME_FAILED,
+      degraded_reasons: reasons,
+      results_trustworthy: false,
+      error: message,
+      ...stripReservedOutcomeKeys(extra),
+    },
+    true
+  );
+}
+
+// successResponse can no longer emit a clean result on its own authority. It
+// reads the per-request collector, and when that collector holds failures the
+// response is stamped degraded/failed — with isError:true on failed, using the
+// same jsonResponse channel errorResponse already uses.
 function successResponse(data = {}) {
-  return jsonResponse({ success: true, ...data });
+  const { outcome, degraded_reasons, results_trustworthy } = currentOutcome().summarize();
+  return jsonResponse(
+    {
+      success: outcome !== OUTCOME_FAILED,
+      outcome,
+      degraded_reasons,
+      results_trustworthy,
+      ...stripReservedOutcomeKeys(data),
+    },
+    outcome === OUTCOME_FAILED
+  );
 }
 
 function asNumber(value, fallback = 0) {
@@ -139,6 +286,21 @@ function queryRows(queryResult) {
   return queryResult && queryResult.ok && Array.isArray(queryResult.rows)
     ? queryResult.rows
     : [];
+}
+
+// A view may only state a fact when the query behind it actually answered.
+// `sourceOk(x) === false` means every field derived from x renders UNKNOWN —
+// never "clean", "OK", "GREEN", or 0. (issue #4 A4)
+const UNKNOWN = "UNKNOWN";
+
+function sourceOk(queryResult) {
+  return Boolean(queryResult && queryResult.ok === true);
+}
+
+function sourceError(queryResult) {
+  if (!queryResult) return "not queried";
+  if (queryResult.ok) return null;
+  return queryResult.error || "query failed";
 }
 
 function firstStartupSummary(startup) {
@@ -172,7 +334,14 @@ function formatStartupView(payload) {
   const platform = session.platform || summary.platform || factory.platform_profile || "unknown";
   const dbName = identity.db_name || "unknown-db";
   const dbUser = identity.db_user || "unknown-user";
-  const openTaskTotal = summary.open_task_total || "0";
+  // Source availability gates every derived fact below. A missing relation
+  // reduces to an empty array; an empty array must not become a number.
+  const summaryOk = sourceOk(startup.summary);
+  const readinessOk = sourceOk(startup.readiness);
+  const embeddingOk = sourceOk(startup.embedding);
+  const agreementsOk = sourceOk(startup.agreements);
+
+  const openTaskTotal = summaryOk ? summary.open_task_total || "0" : UNKNOWN;
   const readyAgreements = agreements.filter((row) => row.status_label === "READY").length;
   const connectorOk = readiness.filter((row) => row.status_label === "OK").length;
   const connectorTotal = readiness.length;
@@ -182,14 +351,35 @@ function formatStartupView(payload) {
   const ruleTarget = asNumber(governance.rule_count_target);
   const combinedTarget = asNumber(governance.combined_governance_target);
   const combinedCurrent = asNumber(governance.active_sop_count) + ruleCount;
-  const governanceLabel =
-    ruleTarget && ruleCount < ruleTarget
+  const governanceLabel = !summaryOk
+    ? `${UNKNOWN} rules`
+    : ruleTarget && ruleCount < ruleTarget
       ? `WARN ${ruleCount}/${ruleTarget} rules`
-      : `OK ${ruleCount || "unknown"} rules`;
-  const combinedLabel =
-    combinedTarget && combinedCurrent < combinedTarget
+      : `OK ${ruleCount || UNKNOWN} rules`;
+  const combinedLabel = !summaryOk
+    ? `${UNKNOWN} combined`
+    : combinedTarget && combinedCurrent < combinedTarget
       ? `WARN ${combinedCurrent}/${combinedTarget} combined`
-      : `OK ${combinedCurrent || "unknown"} combined`;
+      : `OK ${combinedCurrent || UNKNOWN} combined`;
+  const sopLabel = summaryOk ? `${sopIndex.length} active ${plural(sopIndex.length, "SOP")}` : `${UNKNOWN} active SOPs`;
+  const factoryStatus = !readinessOk
+    ? UNKNOWN
+    : connectorOk === connectorTotal && connectorTotal > 0
+      ? "GREEN"
+      : "CHECK";
+  const connectorLabel = readinessOk
+    ? `${connectorOk}/${connectorTotal} ${plural(connectorTotal, "connector")} OK`
+    : `${UNKNOWN} connectors (readiness query failed)`;
+  const skillLabel = agreementsOk
+    ? `${readyAgreements}/${agreements.length} ${plural(agreements.length, "skill")} READY`
+    : `${UNKNOWN} skills READY (agreement query failed)`;
+  const brainLabel = embeddingOk
+    ? `${staleEmbedding === 0 && unembedded === 0 ? "clean" : "attention needed"} | stale ${staleEmbedding} | unembedded ${unembedded}`
+    : `${UNKNOWN} | stale ${UNKNOWN} | unembedded ${UNKNOWN}`;
+  const workloadLabel = summaryOk
+    ? `${openTaskTotal} open ${plural(openTaskTotal, "task")} | ${formatCountMap(summary.open_tasks)}`
+    : `${UNKNOWN} (startup summary query failed)`;
+  const rosterUnknown = !agreementsOk;
   const skillNames = loadedSkills.map((row) => row.agent_name).filter(Boolean);
   const closedFactory = loadedSkills
     .filter((row) => row.factory_mode === "always_on_core_roster")
@@ -200,25 +390,46 @@ function formatStartupView(payload) {
     .map((row) => row.agent_name)
     .filter(Boolean);
 
+  const unreadable = [
+    ["startup summary", startup.summary],
+    ["startup rules", startup.rules],
+    ["connector readiness", startup.readiness],
+    ["embedding health", startup.embedding],
+    ["agent agreements", startup.agreements],
+  ].filter(([, src]) => !sourceOk(src));
+
   const lines = [
     "O-MATIC VANGUARD FACTORY",
     `Session ${sessionId} | ${platform} | ${dbName} as ${dbUser}`,
     "",
-    `Factory status: ${connectorOk === connectorTotal && connectorTotal > 0 ? "GREEN" : "CHECK"} | ${connectorOk}/${connectorTotal} ${plural(connectorTotal, "connector")} OK | ${readyAgreements}/${agreements.length} ${plural(agreements.length, "skill")} READY`,
-    `Workload: ${openTaskTotal} open ${plural(openTaskTotal, "task")} | ${formatCountMap(summary.open_tasks)}`,
-    `Brain: ${staleEmbedding === 0 && unembedded === 0 ? "clean" : "attention needed"} | stale ${staleEmbedding} | unembedded ${unembedded}`,
-    `Governance: ${governanceLabel} | ${combinedLabel} | ${sopIndex.length} active ${plural(sopIndex.length, "SOP")}`,
+    `Factory status: ${factoryStatus} | ${connectorLabel} | ${skillLabel}`,
+    `Workload: ${workloadLabel}`,
+    `Brain: ${brainLabel}`,
+    `Governance: ${governanceLabel} | ${combinedLabel} | ${sopLabel}`,
+  ];
+
+  if (unreadable.length) {
+    lines.push(
+      "",
+      `Unreadable sources: ${unreadable.length} of 5 startup ${plural(unreadable.length, "query", "queries")} failed — every field above sourced from them reads ${UNKNOWN}.`,
+      ...unreadable.map(([label, src]) => `FAIL ${label}: ${sourceError(src)}`)
+    );
+  }
+
+  lines.push(
     "",
     "Roster",
-    `Core roster: ${closedFactory.join(", ") || "none"}`,
-    `Opt-in lanes: ${optIn.join(", ") || "none"}`,
-    `Loaded order: ${skillNames.join(", ") || "none"}`,
+    `Core roster: ${rosterUnknown ? UNKNOWN : closedFactory.join(", ") || "none"}`,
+    `Opt-in lanes: ${rosterUnknown ? UNKNOWN : optIn.join(", ") || "none"}`,
+    `Loaded order: ${rosterUnknown ? UNKNOWN : skillNames.join(", ") || "none"}`,
     "",
     "Connector Readiness",
-    ...(readiness.length
-      ? readiness.map((row) => `${statusIcon(row.status_label)} ${row.connector_id}: ${row.status_label || row.probe_result || "unknown"}`)
-      : ["INFO no connector readiness rows returned"]),
-  ];
+    ...(!readinessOk
+      ? [`FAIL connector readiness ${UNKNOWN}: ${sourceError(startup.readiness)}`]
+      : readiness.length
+        ? readiness.map((row) => `${statusIcon(row.status_label)} ${row.connector_id}: ${row.status_label || row.probe_result || "unknown"}`)
+        : ["INFO no connector readiness rows returned"])
+  );
 
   if (p1Tasks.length) {
     lines.push("", "P1 Queue");
@@ -836,7 +1047,13 @@ function connectionName(connections) {
 
 async function q(connections, sql, params = [], explicitConnection = null) {
   const name = explicitConnection || connectionName(connections);
-  return connections.query(name, sql, params);
+  const result = await connections.query(name, sql, params);
+  // Row accounting feeds results_trustworthy. q() throws on error, so only
+  // successful reads land here; optionalQuery records the failure side.
+  currentOutcome().recordQuerySuccess(
+    result && result.count !== undefined ? result.count : (result && result.rows ? result.rows.length : 0)
+  );
+  return result;
 }
 
 async function optionalQuery(connections, sql, params = [], explicitConnection = null) {
@@ -844,6 +1061,10 @@ async function optionalQuery(connections, sql, params = [], explicitConnection =
     const result = await q(connections, sql, params, explicitConnection);
     return { ok: true, rows: result.rows, count: result.count };
   } catch (err) {
+    // Record into the per-request collector, not just into the return value.
+    // Nothing forces a caller to check `ok`; the collector is checked for them
+    // by successResponse.
+    currentOutcome().recordQueryFailure(sql, err, explicitConnection);
     return { ok: false, error: err && err.message ? err.message : String(err) };
   }
 }
@@ -976,6 +1197,48 @@ async function handleStartup(connections, args, explicitConnection = null) {
   });
 }
 
+// A13: omatic_factory_health_check used to be a bare alias onto handleStartup,
+// which meant it had no way to fail — it returned success:true against a
+// database where all five startup views errored. It now inherits the outcome
+// machinery and renders an explicit verdict derived from it, so a broken
+// database yields outcome "failed" and isError:true.
+async function handleHealthCheck(connections, args, explicitConnection = null) {
+  const startup = await handleStartup(connections, args || {}, explicitConnection);
+
+  let payload = {};
+  try {
+    payload = JSON.parse(startup.content[0].text);
+  } catch (_err) {
+    payload = {};
+  }
+
+  const collector = currentOutcome();
+  const { outcome, degraded_reasons } = collector.summarize();
+  const checked = ["v_startup_summary", "v_startup_rules", "v_mcp_readiness", "v_embedding_health", "v_agent_agreement"];
+  const health = outcome === OUTCOME_COMPLETE ? "HEALTHY" : outcome === OUTCOME_DEGRADED ? "DEGRADED" : "FAILED";
+
+  if (outcome === OUTCOME_FAILED) {
+    return errorResponse(
+      `Factory health check FAILED: ${degraded_reasons.length} constituent ${plural(degraded_reasons.length, "check")} could not be read on connection "${explicitConnection || connections.defaultName()}".`,
+      {
+        check: "omatic_factory_health_check",
+        health,
+        checks_attempted: checked,
+        view: payload.view || null,
+        identity: payload.identity || null,
+        startup: payload.startup || null,
+      }
+    );
+  }
+
+  return successResponse({
+    check: "omatic_factory_health_check",
+    health,
+    checks_attempted: checked,
+    ...stripReservedOutcomeKeys(payload),
+  });
+}
+
 // --- Factory 3.0: startup modes (pk #71, decision #156) ---
 // Modes control REPORTING DEPTH only. The full safety + health battery runs
 // fresh in every mode, so a broken agreement or empty rule corpus is never
@@ -998,31 +1261,60 @@ function formatFastStartupView(payload) {
   const platform = session.platform || factory.platform_profile || "unknown";
   const sessionId = session.id || "unknown";
 
+  // A17: a blackout is not GREEN. Any source that did not answer becomes an
+  // explicit UNKNOWN item, and UNKNOWN items suppress the GREEN verdict.
+  const summaryOk = sourceOk(startup.summary);
+  const readinessOk = sourceOk(startup.readiness);
+  const embeddingOk = sourceOk(startup.embedding);
+
+  const unknowns = [];
   const redYellow = [];
-  for (const row of readiness) {
-    if (row.status_label && row.status_label !== "OK") {
-      redYellow.push(`${row.status_label}: connector ${row.connector_name || row.name || row.connector || "?"}`);
+
+  if (!readinessOk) {
+    unknowns.push(`${UNKNOWN}: connector readiness unreadable — ${sourceError(startup.readiness)}`);
+  } else {
+    for (const row of readiness) {
+      if (row.status_label && row.status_label !== "OK") {
+        redYellow.push(`${row.status_label}: connector ${row.connector_id || row.connector_name || row.name || row.connector || "?"}`);
+      }
     }
   }
-  const stale = embeddingRows.reduce((total, row) => total + asNumber(row.stale), 0);
-  const unembedded = embeddingRows.reduce((total, row) => total + asNumber(row.unembedded), 0);
-  if (stale || unembedded) redYellow.push(`WARN: embeddings ${stale} stale / ${unembedded} unembedded`);
-  const ruleTarget = asNumber(governance.rule_count_target);
-  const ruleCount = asNumber(governance.active_rule_count);
-  if (ruleTarget && ruleCount < ruleTarget) redYellow.push(`WARN: governance ${ruleCount}/${ruleTarget} rules`);
 
-  const resume =
-    session.resume_notes || summary.last_resume_notes || summary.last_summary || "no resume point recorded";
-  const openTasks = summary.open_task_total || "0";
+  if (!embeddingOk) {
+    unknowns.push(`${UNKNOWN}: embedding health unreadable — ${sourceError(startup.embedding)}`);
+  } else {
+    const stale = embeddingRows.reduce((total, row) => total + asNumber(row.stale), 0);
+    const unembedded = embeddingRows.reduce((total, row) => total + asNumber(row.unembedded), 0);
+    if (stale || unembedded) redYellow.push(`WARN: embeddings ${stale} stale / ${unembedded} unembedded`);
+  }
 
+  if (!summaryOk) {
+    unknowns.push(`${UNKNOWN}: startup summary unreadable — ${sourceError(startup.summary)}`);
+  } else {
+    const ruleTarget = asNumber(governance.rule_count_target);
+    const ruleCount = asNumber(governance.active_rule_count);
+    if (ruleTarget && ruleCount < ruleTarget) redYellow.push(`WARN: governance ${ruleCount}/${ruleTarget} rules`);
+  }
+
+  const resume = !summaryOk
+    ? session.resume_notes || `${UNKNOWN} — resume point unreadable`
+    : session.resume_notes || summary.last_resume_notes || summary.last_summary || "no resume point recorded";
+  const openTasks = summaryOk ? summary.open_task_total || "0" : UNKNOWN;
+
+  const items = unknowns.concat(redYellow);
   const lines = [];
   lines.push(`O-MATIC FAST WAKE — ${factory.factory_id || factory.name || "factory"} @ ${platform}`);
   lines.push(`db=${dbName} session=${sessionId} mode=${payload.mode || "fast"}`);
-  if (redYellow.length === 0) {
+  if (items.length === 0) {
     lines.push("Status: GREEN — no red/yellow items.");
+  } else if (unknowns.length) {
+    lines.push(
+      `Status: ${UNKNOWN} — ${unknowns.length} health ${plural(unknowns.length, "source")} could not be read; ${items.length} item(s) need attention:`
+    );
+    for (const item of items) lines.push(`  - ${item}`);
   } else {
-    lines.push(`Status: ${redYellow.length} item(s) need attention:`);
-    for (const item of redYellow) lines.push(`  - ${item}`);
+    lines.push(`Status: ${items.length} item(s) need attention:`);
+    for (const item of items) lines.push(`  - ${item}`);
   }
   lines.push(`Open P1+ tasks: ${openTasks}`);
   lines.push(`Resume: ${resume}`);
@@ -1550,6 +1842,7 @@ async function handleClaimWork(connections, args, explicitConnection = null) {
   if (!verified.ok) return errorResponse(verified.error, verified);
 
   if (!(await tableExists(connections, "work_claims", explicitConnection))) {
+    currentOutcome().recordUnavailable("work_claims", "table is not installed for this factory");
     return successResponse({
       available: false,
       message: "work_claims table is not installed for this factory yet.",
@@ -1582,6 +1875,7 @@ async function handleReleaseWork(connections, args, explicitConnection = null) {
   if (!verified.ok) return errorResponse(verified.error, verified);
 
   if (!(await tableExists(connections, "work_claims", explicitConnection))) {
+    currentOutcome().recordUnavailable("work_claims", "table is not installed for this factory");
     return successResponse({
       available: false,
       message: "work_claims table is not installed for this factory yet.",
@@ -1612,6 +1906,8 @@ async function handleSql(connections, args, explicitConnection = null, guardDest
 
   const name = explicitConnection || connectionName(connections);
   const { rows, count } = await connections.execute(name, sql);
+  // execute() bypasses q(), so account for its rows explicitly.
+  currentOutcome().recordQuerySuccess(count !== undefined ? count : (rows ? rows.length : 0));
   return successResponse({ data: { rows, count }, pinned_connection: explicitConnection });
 }
 
@@ -1798,67 +2094,84 @@ async function handleSetActiveConnection(connections, args) {
   });
 }
 
+// Every tool call runs inside its own outcome scope. Handlers do not opt in —
+// optionalQuery/q write into the collector automatically, and successResponse
+// reads it on the way out.
 async function handleToolCall(connections, name, args) {
+  return runWithOutcome(() => dispatchToolCall(connections, name, args));
+}
+
+async function dispatchToolCall(connections, name, args) {
   try {
-    // Raw SQL tools — postgres-cabinet-{name}:execute_sql and
-    // o-matic-server-{name}:execute_sql — bypass destructive guard.
-    const legacy = parseLegacyToolName(name);
-    if (legacy) return handleSql(connections, args || {}, legacy.connection, false);
-
-    // Per-connection base tool variant — e.g. omatic_factory_startup:selife.
-    const perConn = parseBaseToolName(name);
-    const targetName = perConn ? perConn.base : name;
-    const explicitConnection = perConn ? perConn.connection : null;
-
-    if (perConn && !connections.has(explicitConnection)) {
-      return errorResponse(
-        `Connection "${explicitConnection}" is not configured. Available: ${connections.names().join(", ") || "(none)"}.`
-      );
-    }
-
-    switch (targetName) {
-      case "omatic_usage_guide":
-        return handleUsageGuide(connections, args || {}, explicitConnection);
-      case "omatic_resolve_factory":
-        return handleResolveFactory(connections, args || {}, explicitConnection);
-      case "omatic_factory_startup":
-      case "omatic_factory_health_check":
-        return handleStartup(connections, args || {}, explicitConnection);
-      case "omatic_factory_startup_run":
-        return handleStartupRun(connections, args || {}, explicitConnection);
-      case "omatic_search_memory":
-        return handleSearchMemory(connections, args || {}, explicitConnection);
-      case "omatic_embedding_status":
-        return handleEmbeddingStatus(connections, args || {}, explicitConnection);
-      case "omatic_list_tasks":
-        return handleListTasks(connections, args || {}, explicitConnection);
-      case "omatic_record_decision":
-        return handleRecordDecision(connections, args || {}, explicitConnection);
-      case "omatic_record_session_event":
-        return handleRecordSessionEvent(connections, args || {}, explicitConnection);
-      case "omatic_record_probe_result":
-        return handleRecordProbeResult(connections, args || {}, explicitConnection);
-      case "omatic_claim_work":
-        return handleClaimWork(connections, args || {}, explicitConnection);
-      case "omatic_release_work":
-        return handleReleaseWork(connections, args || {}, explicitConnection);
-      case "omatic_execute_sql":
-        return handleSql(connections, args || {}, explicitConnection);
-      case "omatic_select_factory":
-        return handleSelectFactory(connections, args || {});
-      case "omatic_add_connection":
-        return handleAddConnection(connections, args || {});
-      case "omatic_list_connections":
-        return handleListConnections(connections);
-      case "omatic_remove_connection":
-        return handleRemoveConnection(connections, args || {});
-      case "omatic_set_active_connection":
-        return handleSetActiveConnection(connections, args || {});
-      default:
-        return errorResponse(`Unknown tool: ${name}`);
-    }
+    // `await` is load-bearing: the switch below returns promises, and without
+    // awaiting here a rejected handler escapes this catch entirely — skipping
+    // the outcome envelope and the isError flag it is supposed to set.
+    return await routeToolCall(connections, name, args);
   } catch (err) {
-    return errorResponse(err && err.message ? err.message : String(err));
+    const message = err && err.message ? err.message : String(err);
+    currentOutcome().markFatal(message);
+    return errorResponse(message);
+  }
+}
+
+async function routeToolCall(connections, name, args) {
+  // Raw SQL tools — postgres-cabinet-{name}:execute_sql and
+  // o-matic-server-{name}:execute_sql — bypass destructive guard.
+  const legacy = parseLegacyToolName(name);
+  if (legacy) return handleSql(connections, args || {}, legacy.connection, false);
+
+  // Per-connection base tool variant — e.g. omatic_factory_startup:selife.
+  const perConn = parseBaseToolName(name);
+  const targetName = perConn ? perConn.base : name;
+  const explicitConnection = perConn ? perConn.connection : null;
+
+  if (perConn && !connections.has(explicitConnection)) {
+    return errorResponse(
+      `Connection "${explicitConnection}" is not configured. Available: ${connections.names().join(", ") || "(none)"}.`
+    );
+  }
+
+  switch (targetName) {
+    case "omatic_usage_guide":
+      return handleUsageGuide(connections, args || {}, explicitConnection);
+    case "omatic_resolve_factory":
+      return handleResolveFactory(connections, args || {}, explicitConnection);
+    case "omatic_factory_startup":
+      return handleStartup(connections, args || {}, explicitConnection);
+    case "omatic_factory_health_check":
+      return handleHealthCheck(connections, args || {}, explicitConnection);
+    case "omatic_factory_startup_run":
+      return handleStartupRun(connections, args || {}, explicitConnection);
+    case "omatic_search_memory":
+      return handleSearchMemory(connections, args || {}, explicitConnection);
+    case "omatic_embedding_status":
+      return handleEmbeddingStatus(connections, args || {}, explicitConnection);
+    case "omatic_list_tasks":
+      return handleListTasks(connections, args || {}, explicitConnection);
+    case "omatic_record_decision":
+      return handleRecordDecision(connections, args || {}, explicitConnection);
+    case "omatic_record_session_event":
+      return handleRecordSessionEvent(connections, args || {}, explicitConnection);
+    case "omatic_record_probe_result":
+      return handleRecordProbeResult(connections, args || {}, explicitConnection);
+    case "omatic_claim_work":
+      return handleClaimWork(connections, args || {}, explicitConnection);
+    case "omatic_release_work":
+      return handleReleaseWork(connections, args || {}, explicitConnection);
+    case "omatic_execute_sql":
+      return handleSql(connections, args || {}, explicitConnection);
+    case "omatic_select_factory":
+      return handleSelectFactory(connections, args || {});
+    case "omatic_add_connection":
+      return handleAddConnection(connections, args || {});
+    case "omatic_list_connections":
+      return handleListConnections(connections);
+    case "omatic_remove_connection":
+      return handleRemoveConnection(connections, args || {});
+    case "omatic_set_active_connection":
+      return handleSetActiveConnection(connections, args || {});
+    default:
+      return errorResponse(`Unknown tool: ${name}`);
   }
 }
 
@@ -1875,6 +2188,13 @@ module.exports = {
   // Test affordance (Factory 3.0 startup modes) — pure helpers, no side effects.
   __test__: {
     formatFastStartupView,
+    formatStartupView,
     startupViewForMode,
+    // P0 response layer (issue #4 section A).
+    OutcomeCollector,
+    runWithOutcome,
+    currentOutcome,
+    successResponse,
+    errorResponse,
   },
 };
