@@ -13,6 +13,38 @@ const DEFAULT_SSL_MODE = "prefer";
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
+// ── Per-connection permission (section C, C6) ────────────────────────────────
+//
+// `benecard` is a client database. `dbadmin` connects as a superuser. Before
+// this, any tool could write to either and the only thing preventing it was the
+// model choosing not to — a rule loaded, not a rule obeyed (#321). The mode is
+// stored in .omatic/factory.json beside host/user/ssl_mode and is enforced, not
+// advertised.
+//
+//   read_write   everything works. The default, so nothing existing changes.
+//   read_only    reads work; every write, DDL and DML is refused before it
+//                reaches the database, and the pool additionally runs with
+//                default_transaction_read_only=on so the server refuses too.
+//   disabled     the connection resolves and is listed, but no tool will use
+//                it. Visible, deliberately parked.
+const VALID_PERMISSIONS = new Set(["read_write", "read_only", "disabled"]);
+const DEFAULT_PERMISSION = "read_write";
+
+function normalizePermission(mode, fallback = DEFAULT_PERMISSION) {
+  const value = String(mode === undefined || mode === null ? "" : mode).trim().toLowerCase().replace(/-/g, "_");
+  if (!value) return fallback;
+  return value;
+}
+
+function assertValidPermission(mode, label) {
+  if (!VALID_PERMISSIONS.has(mode)) {
+    throw new Error(
+      `${label}: invalid permission "${mode}". Allowed: ${[...VALID_PERMISSIONS].join(", ")}.`
+    );
+  }
+  return mode;
+}
+
 function errMessage(err) {
   return err && err.message ? err.message : String(err);
 }
@@ -547,7 +579,22 @@ function unresolvedFactoryError(env = process.env) {
     '  omatic_select_factory(project_root="/absolute/path/to/the/project")',
     "",
     `The selection is persisted to ${report.state_file} and restored automatically on the next start,`,
-    "so this only needs doing once per project."
+    "so this only needs doing once per project.",
+    "",
+    // C4. Pinning a factory is only the first half of the recovery. An operator
+    // who has no factory yet, or whose factory.json holds a connection that has
+    // never actually connected, needs the connection surface named here — the
+    // error is the one place they are guaranteed to be looking.
+    "Once a factory is pinned, the connection surface is:",
+    "  omatic_list_connections()                       — every configured connection with live reachability and negotiated TLS",
+    "  omatic_test_connection(host=..., database=..., user=..., password=..., ssl_mode=...)",
+    "                                                  — try a host and password without saving anything",
+    "  omatic_add_connection(name=..., host=..., ...)  — test-connects first; a failed probe writes nothing",
+    "  omatic_edit_connection(name=..., password=...)  — fix one field on an existing connection, re-tested before it is saved",
+    "  omatic_remove_connection(name=...)              — drop a connection",
+    "",
+    "If there is no factory.json at all yet, omatic_add_connection creates one — it writes the first",
+    "connection into a new .omatic/factory.json at the highest-ranked candidate root above."
   );
   if (!report.state_durable) {
     lines.push(
@@ -701,6 +748,12 @@ function parseConnectionEntry(entry, fallbackName) {
       `Connection "${name}"`
     );
     const sslRootCert = entry.ssl_root_cert || entry.sslRootCert || null;
+    // C6. Absent means read_write — every factory.json written before this
+    // release keeps working exactly as it did.
+    const permission = assertValidPermission(
+      normalizePermission(entry.permission || entry.permissions),
+      `Connection "${name}"`
+    );
     return {
       name: sanitizeName(name),
       host: String(entry.host),
@@ -709,6 +762,7 @@ function parseConnectionEntry(entry, fallbackName) {
       user: String(entry.user),
       password: String(entry.password || ""),
       sslMode,
+      permission,
       ...(sslRootCert ? { sslRootCert: String(sslRootCert) } : {}),
     };
   }
@@ -872,6 +926,9 @@ function serializeConnection(c) {
     user: c.user,
     password: c.password,
     ssl_mode: c.sslMode,
+    // C6. Always written, including the default, so the file states the access
+    // policy explicitly rather than leaving it implied by absence.
+    permission: c.permission || DEFAULT_PERMISSION,
     ...(c.sslRootCert ? { ssl_root_cert: c.sslRootCert } : {}),
   };
 }
@@ -926,6 +983,7 @@ function isFactoryFileGitignored(filePath) {
 }
 
 function poolOptionsFor(cfg, ssl, extra = {}) {
+  const permission = normalizePermission(cfg.permission);
   return {
     host: cfg.host,
     port: cfg.port,
@@ -934,6 +992,14 @@ function poolOptionsFor(cfg, ssl, extra = {}) {
     password: cfg.password,
     ssl,
     connectionTimeoutMillis: 10_000,
+    // C6, second layer. The tool-layer chokepoint is the enforcement point and
+    // refuses writes with a clear message; this makes the server refuse them
+    // too. Statement classification is string work and string work has edge
+    // cases, so the guarantee should not rest on it alone — if a write ever
+    // slips past the classifier, PostgreSQL rejects it with
+    // "cannot execute INSERT in a read-only transaction". Belt and braces on a
+    // client database is the right amount of paranoia.
+    ...(permission === "read_only" ? { options: "-c default_transaction_read_only=on" } : {}),
     ...extra,
   };
 }
@@ -1094,6 +1160,18 @@ class ConnectionManager {
       return null;
     }
 
+    // C6, third layer. The tool-layer chokepoint already refuses a disabled
+    // connection, but a disabled connection must not be openable by any route
+    // at all — including a future caller that reaches getPool directly.
+    if (normalizePermission(cfg.permission) === "disabled") {
+      const err = new Error(
+        `Connection "${name}" is disabled (permission: disabled) and will not be opened. ` +
+          `Re-enable it with omatic_edit_connection(name="${name}", permission="read_only") or "read_write".`
+      );
+      err.code = "OMATIC_CONNECTION_DISABLED";
+      throw err;
+    }
+
     const creation = (async () => {
       const result = await negotiate(cfg, { max: 4, idleTimeoutMillis: 30_000 }, async (client, _pool, ssl) => {
         client.release();
@@ -1117,6 +1195,14 @@ class ConnectionManager {
     } finally {
       this.pending.delete(name);
     }
+  }
+
+  // C6. The access mode for a connection. Unknown connections report the
+  // default rather than throwing — callers use this to decide whether to
+  // refuse, and "unknown" must never read as "permitted by omission".
+  permissionOf(name) {
+    const cfg = this.configs.get(name);
+    return cfg && cfg.permission ? cfg.permission : DEFAULT_PERMISSION;
   }
 
   // D9. Configured intent and negotiated reality as separate fields.
@@ -1150,6 +1236,7 @@ class ConnectionManager {
         port: cfg.port,
         database: cfg.database,
         user: cfg.user,
+        permission: this.permissionOf(name),
         ...this.tlsStatus(name),
       };
     });
@@ -1219,7 +1306,12 @@ class ConnectionManager {
         next.database !== old.database ||
         next.user !== old.user ||
         next.password !== old.password ||
-        next.sslMode !== old.sslMode;
+        next.sslMode !== old.sslMode ||
+        // C6. A permission change alters the pool's connection options
+        // (default_transaction_read_only), so the old pool must not survive it.
+        // Without this line, switching a connection to read_only would leave a
+        // live read-write pool serving every subsequent query.
+        next.permission !== old.permission;
       if (replaced) {
         removedOrChanged.push(oldPool.end().catch(() => {}));
         this.pools.delete(name);
@@ -1346,4 +1438,10 @@ module.exports = {
   NAME_PATTERN,
   VALID_SSL_MODES,
   DEFAULT_SSL_MODE,
+  // permissions (C6)
+  VALID_PERMISSIONS,
+  DEFAULT_PERMISSION,
+  normalizePermission,
+  assertValidPermission,
+  poolOptionsFor,
 };
