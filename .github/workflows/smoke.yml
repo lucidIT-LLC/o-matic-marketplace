@@ -1,8 +1,10 @@
 name: smoke
 
-# 188 assertions guarded this release and nothing ran them automatically.
-# The suite is pure logic — no DB, no network — so there is no reason it
-# should only run when someone remembers to.
+# The regression guards for Factory 3.0 — the response envelope that could not
+# express failure, probes that restamped cached verdicts, view formatters reading
+# columns that do not exist, blackout rendering as GREEN. None of it ran unless
+# someone remembered to type the command. The suite is pure logic, no DB and no
+# network, so there was never a reason for it to be manual.
 on:
   push:
     branches: ["**"]
@@ -17,9 +19,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: omatic-server-connection smoke suite
+      - name: server smoke suite
         working-directory: omatic-server-connection/server
         run: npm run check
+      # There are two package.json files. CI was running the server one; the
+      # plugin-root one — what a human types — did not include the suite, and
+      # ended in a `--version` call that hung forever. Both run now.
       - name: plugin-root check (the one a human runs)
         working-directory: omatic-server-connection
         run: npm run check
+
+  vendored-deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: committed node_modules matches the lockfile
+        run: node scripts/verify-vendored-deps.mjs
