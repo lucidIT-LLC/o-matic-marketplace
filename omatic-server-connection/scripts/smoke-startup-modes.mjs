@@ -18,6 +18,7 @@ const {
   currentOutcome,
   successResponse,
   errorResponse,
+  deriveBuiltInPostgresProbe,
   viewField,
   assertToolNamesSafe,
   hostVisibleToolName,
@@ -186,6 +187,200 @@ const spoofRes = runWithOutcome(() => {
 const spoofPayload = JSON.parse(spoofRes.content[0].text);
 ok(spoofPayload.outcome === "failed", "handler cannot spoof outcome=complete");
 ok(spoofPayload.results_trustworthy === false, "handler cannot spoof results_trustworthy");
+
+// ══════════════════════════════════════════════════════════════════════════
+// A9 — no_op, the fourth outcome state (issue #4)
+// ══════════════════════════════════════════════════════════════════════════
+
+// The regression this closes: a zero-row mutation used to be indistinguishable
+// from an effective one, because both reported outcome="complete".
+const noOpRes = runWithOutcome(() => {
+  const c = currentOutcome();
+  c.recordQuerySuccess(0);
+  c.recordNoOp("omatic_release_work", "no active work_claims row matched; nothing was released");
+  return successResponse({ available: true, released: [], count: 0 });
+});
+const noOpPayload = JSON.parse(noOpRes.content[0].text);
+ok(noOpPayload.outcome === "no_op", "A9 a zero-row mutation reports outcome=no_op");
+ok(noOpPayload.outcome !== "complete", "A9 a zero-row mutation is no longer reported as complete");
+ok(noOpRes.isError === false, "A9 no_op is not an MCP protocol error");
+ok(noOpPayload.success === true, "A9 no_op is not a failure — nothing went wrong");
+ok(noOpPayload.no_op_reasons.length === 1, "A9 no_op_reasons carries the explanation");
+ok(/release_work/.test(noOpPayload.no_op_reasons[0]), "A9 no_op_reasons names the mutation");
+ok(noOpPayload.degraded_reasons.length === 0, "A9 a no-op is not a degradation");
+ok(noOpPayload.results_trustworthy === true, "A9 a no_op's zero rows are a measured, trustworthy answer");
+
+// An effective release must still be plainly distinguishable from the above.
+const realReleaseRes = runWithOutcome(() => {
+  currentOutcome().recordQuerySuccess(1);
+  return successResponse({ available: true, released: [{ id: 1 }], count: 1 });
+});
+const realReleasePayload = JSON.parse(realReleaseRes.content[0].text);
+ok(realReleasePayload.outcome === "complete", "A9 a release that did change a row stays complete");
+ok(realReleasePayload.no_op_reasons.length === 0, "A9 an effective mutation records no no-op");
+
+// Precedence: a real failure outranks a no-op, and both reason channels survive.
+const noOpDegradedRes = runWithOutcome(() => {
+  const c = currentOutcome();
+  c.recordQuerySuccess(2);
+  c.recordNoOp("omatic_release_work", "nothing matched");
+  c.recordQueryFailure("SELECT * FROM v_embedding_health", new Error("boom"));
+  return successResponse({ rows: [1, 2] });
+});
+const noOpDegradedPayload = JSON.parse(noOpDegradedRes.content[0].text);
+ok(noOpDegradedPayload.outcome === "degraded", "A9 degradation outranks no_op");
+ok(noOpDegradedPayload.degraded_reasons.length === 1, "A9 degraded reasons survive alongside a no-op");
+ok(noOpDegradedPayload.no_op_reasons.length === 1, "A9 no-op reasons survive alongside a degradation");
+
+// Failure still outranks everything.
+const noOpFailedRes = runWithOutcome(() => {
+  const c = currentOutcome();
+  c.recordNoOp("omatic_release_work", "nothing matched");
+  c.recordQueryFailure("SELECT 1", new Error("boom"));
+  return successResponse({});
+});
+ok(JSON.parse(noOpFailedRes.content[0].text).outcome === "failed", "A9 total failure outranks no_op");
+
+// The operator-stated invariant, still holding with a fourth state in play.
+let noOpCompleteInvariantThrew = false;
+try {
+  const c = new OutcomeCollector();
+  c.failures.push({ sql: "x", error: "y", connection: null });
+  c.okQueryCount = 1;
+  Object.defineProperty(c, "outcome", { value: () => "complete" });
+  c.summarize();
+} catch {
+  noOpCompleteInvariantThrew = true;
+}
+ok(noOpCompleteInvariantThrew, "A9 complete + non-empty degraded_reasons still throws");
+
+// complete must also be unreachable while a no-op is on the books.
+let completeWithNoOpThrew = false;
+try {
+  const c = new OutcomeCollector();
+  c.recordNoOp("m", "r");
+  Object.defineProperty(c, "outcome", { value: () => "complete" });
+  c.summarize();
+} catch {
+  completeWithNoOpThrew = true;
+}
+ok(completeWithNoOpThrew, "A9 complete + non-empty no_op_reasons throws the invariant");
+
+// ...and an unbacked no_op is a wiring bug, not a quiet default.
+let unbackedNoOpThrew = false;
+try {
+  const c = new OutcomeCollector();
+  Object.defineProperty(c, "outcome", { value: () => "no_op" });
+  c.summarize();
+} catch {
+  unbackedNoOpThrew = true;
+}
+ok(unbackedNoOpThrew, "A9 outcome=no_op with no recorded no-op throws the invariant");
+
+// A handler cannot fake the new field any more than the old ones.
+const spoofNoOpRes = runWithOutcome(() =>
+  successResponse({ no_op_reasons: ["invented"], outcome: "no_op" })
+);
+const spoofNoOpPayload = JSON.parse(spoofNoOpRes.content[0].text);
+ok(spoofNoOpPayload.outcome === "complete", "A9 handler cannot spoof outcome=no_op");
+ok(spoofNoOpPayload.no_op_reasons.length === 0, "A9 handler cannot spoof no_op_reasons");
+
+// A9 end-to-end: the layer is only half the fix — omatic_release_work has to
+// actually call recordNoOp. This drives the real dispatcher against a stubbed
+// connection so the wiring is covered, not just the collector.
+function stubConnections(updateResult) {
+  const cfg = { name: "omatic", host: "localhost", port: 5432, database: "o-matic", user: "u" };
+  return {
+    activeName: "omatic",
+    names: () => ["omatic"],
+    defaultName: () => "omatic",
+    getConfig: () => cfg,
+    project: () => ({ factory_id: "omatic", platform_profile: "claude-code", resolution: {} }),
+    async query(_name, sql) {
+      if (/current_database\(\)/.test(sql)) return { rows: [{ db_name: "o-matic", db_user: "u" }], count: 1 };
+      if (/to_regclass/.test(sql)) return { rows: [{ relation: "public.work_claims" }], count: 1 };
+      if (/UPDATE work_claims/.test(sql)) return updateResult;
+      throw new Error(`unexpected SQL in stub: ${sql}`);
+    },
+  };
+}
+
+const releaseArgs = { resource_type: "task", resource_id: "T-1", claimed_by: "carver" };
+
+const e2eNoOp = JSON.parse(
+  (await handleToolCall(stubConnections({ rows: [], count: 0 }), "omatic_release_work", releaseArgs))
+    .content[0].text
+);
+ok(e2eNoOp.outcome === "no_op", "A9 omatic_release_work reports no_op when no claim was held");
+ok(e2eNoOp.count === 0, "A9 the zero count is still reported alongside no_op");
+ok(/T-1/.test(e2eNoOp.no_op_reasons.join(" ")), "A9 the no-op reason names the resource that did not match");
+
+const e2eReleased = JSON.parse(
+  (await handleToolCall(
+    stubConnections({ rows: [{ id: 1, status: "released" }], count: 1 }),
+    "omatic_release_work",
+    releaseArgs
+  )).content[0].text
+);
+ok(e2eReleased.outcome === "complete", "A9 omatic_release_work stays complete when a claim was actually released");
+ok(
+  e2eNoOp.outcome !== e2eReleased.outcome,
+  "A9 holding a claim and not holding one are now distinguishable from the outcome alone"
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// A15 — the built-in probe reports the measurement, not the intention
+// ══════════════════════════════════════════════════════════════════════════
+
+// Both observations succeeded: connected is earned.
+const probeGreen = deriveBuiltInPostgresProbe({ sessionId: 42, seedOk: true, seedValue: 7 });
+ok(probeGreen.status === "connected", "A15 probe is connected when the INSERT and seed both succeeded");
+ok(probeGreen.connector_name === "postgres-omatic", "A15 probe names the connector it measured");
+ok(/session id 42/.test(probeGreen.note), "A15 probe note cites the observed session id");
+ok(/returned 7/.test(probeGreen.note), "A15 probe note cites the observed seed value");
+ok(
+  !/database query path verified/.test(probeGreen.note),
+  "A15 probe no longer emits the pre-written 'verified' note"
+);
+
+// Seed errored: the database is reachable, the readiness path is not.
+const probeSeedFailed = deriveBuiltInPostgresProbe({
+  sessionId: 42,
+  seedOk: false,
+  seedError: "function fn_seed_session_mcp_status(integer) does not exist",
+});
+ok(probeSeedFailed.status === "degraded", "A15 a failed seed degrades the probe instead of reporting connected");
+ok(
+  /fn_seed_session_mcp_status does not exist|does not exist/.test(probeSeedFailed.note),
+  "A15 probe note carries the actual seed error"
+);
+
+// Seed ran but produced nothing — the silent case the old literal papered over.
+const probeSeedEmpty = deriveBuiltInPostgresProbe({ sessionId: 42, seedOk: true, seedValue: null });
+ok(probeSeedEmpty.status === "degraded", "A15 a seed that returned no value is not reported as connected");
+ok(/produced no value/.test(probeSeedEmpty.note), "A15 probe note states the seed produced no value");
+
+// No session anchored: nothing to be green about.
+const probeNoSession = deriveBuiltInPostgresProbe({ sessionId: null, seedOk: true, seedValue: 1 });
+ok(probeNoSession.status === "degraded", "A15 probe is degraded when no session id was returned");
+ok(/no session id/.test(probeNoSession.note), "A15 probe note states no session id was returned");
+
+// Defensive: a call with no observations at all must never be green.
+ok(deriveBuiltInPostgresProbe().status === "degraded", "A15 probe with zero observations is degraded");
+ok(
+  deriveBuiltInPostgresProbe({}).status === "degraded",
+  "A15 probe defaults to degraded rather than assuming success"
+);
+
+// The status must be reachable in both directions — a probe hard-wired to
+// "degraded" would pass every assertion above and still be dishonest.
+ok(
+  new Set([
+    deriveBuiltInPostgresProbe({ sessionId: 1, seedOk: true, seedValue: 1 }).status,
+    deriveBuiltInPostgresProbe({ sessionId: 1, seedOk: false }).status,
+  ]).size === 2,
+  "A15 probe status actually varies with the observations"
+);
 
 // ══════════════════════════════════════════════════════════════════════════
 // P1 tool surface (issue #4: J1/A10, A6, A11, A12, D5, B8)
@@ -495,6 +690,16 @@ const toolsCode = require("node:fs")
   .filter((line) => !line.trim().startsWith("//"))
   .join("\n");
 ok(!/startsWith\("100\./.test(toolsCode), "D5 the 100.x hostname branch is gone from tools.js");
+// A15: the pre-written probe literal must not come back. Comments are stripped
+// above, so the surviving explanatory comment cannot satisfy this.
+ok(
+  !/database query path verified/.test(toolsCode),
+  "A15 the hard-coded 'database query path verified' note is gone from tools.js"
+);
+ok(
+  !/status:\s*"connected"/.test(toolsCode),
+  "A15 no probe declares status:\"connected\" as a literal"
+);
 ok(!/args\.host[^\n]*\?[^\n]*ssl/i.test(toolsCode), "D5 no ssl mode is selected from a host expression");
 ok(
   !/ssl_mode\s*\|\|\s*\(/.test(toolsCode),
@@ -510,6 +715,91 @@ ok(
 ok(
   /omatic_search_memory:name|omatic_execute_sql:name/.test(instructions),
   "B8 server instructions name pinned variants that actually exist"
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// P3 — the shipped docs must not advertise tools that do not exist
+// ══════════════════════════════════════════════════════════════════════════
+//
+// The B8 cut took the surface from 99 to 34 and removed 10 pinned families,
+// but the README and the setup command kept describing the old one. Docs drift
+// silently; this pins them to the real surface.
+const fsMod = require("node:fs");
+const docSurface = buildToolList({
+  activeName: "omatic",
+  names: () => ["omatic", "kb"],
+  defaultName: () => "omatic",
+  getConfig: (n) => ({ name: n, host: "h", port: 5432, database: `db_${n}`, user: "u" }),
+  project: () => ({ factory_id: "omatic", platform_profile: "claude-code", resolution: {} }),
+});
+const realToolNames = new Set(docSurface.map((t) => t.name));
+const realPinnedFamilies = new Set(
+  docSurface.filter((t) => t.name.includes(":")).map((t) => t.name.split(":")[0])
+);
+
+ok(realPinnedFamilies.size === 3, "P3 exactly three pinned families exist");
+for (const fam of ["omatic_execute_sql", "omatic_search_memory", "omatic_list_tasks"]) {
+  ok(realPinnedFamilies.has(fam), `P3 ${fam} is a real pinned family`);
+}
+ok(
+  !realPinnedFamilies.has("omatic_factory_startup_run"),
+  "P3 omatic_factory_startup_run is NOT pinnable (the docs used to claim it was)"
+);
+
+// Every `omatic_x:{...}` pinned form a doc advertises must be a real family.
+// Excludes the README's explicit table of REMOVED tools, which is under a
+// heading that says so.
+const docFiles = [
+  ["README.md", "../README.md"],
+  ["commands/omatic-setup.md", "../commands/omatic-setup.md"],
+  ["skills/orch-o-matic-probot/SKILL.md", "../skills/orch-o-matic-probot/SKILL.md"],
+];
+for (const [label, rel] of docFiles) {
+  const text = fsMod.readFileSync(resolve(here, rel), "utf8");
+  // A doc line may legitimately name a cut tool in exactly two places: the
+  // removed-tools migration table, and a historical changelog entry that marks
+  // itself superseded. Everything else is an advertisement and must be real.
+  let inRemovedTable = false;
+  const body = text
+    .split("\n")
+    .filter((line) => {
+      if (/^\s*### What was removed/.test(line)) {
+        inRemovedTable = true;
+        return false;
+      }
+      if (inRemovedTable && /^\s*###\s/.test(line)) inRemovedTable = false;
+      if (inRemovedTable) return false;
+      return !/\(Superseded in [0-9]/i.test(line);
+    })
+    .join("\n");
+  const claimed = [...body.matchAll(/`(omatic_[a-z_]+):\{?[a-z-]+\}?`/g)].map((m) => m[1]);
+  const bogus = [...new Set(claimed)].filter((n) => !realPinnedFamilies.has(n));
+  ok(bogus.length === 0, `P3 ${label} advertises only real pinned families (found: ${bogus.join(", ")})`);
+
+  // No doc outside the removed table may present the cut raw-SQL aliases as usable.
+  ok(
+    !/`o-matic-server-[^`]*:execute_sql`|`postgres-cabinet-[^`]*:execute_sql`/.test(body),
+    `P3 ${label} does not advertise the removed raw execute_sql aliases`
+  );
+
+  // Unsuffixed tool names named in backticks must exist.
+  const named = [...body.matchAll(/`(omatic_[a-z_]+)`/g)].map((m) => m[1]);
+  const missing = [...new Set(named)].filter((n) => !realToolNames.has(n));
+  ok(missing.length === 0, `P3 ${label} names only tools that exist (missing: ${missing.join(", ")})`);
+}
+
+// The README must actually carry the 3.0 breaking-change guidance.
+const readmeText = fsMod.readFileSync(resolve(here, "../README.md"), "utf8");
+ok(/BREAKING/.test(readmeText), "P3 README documents the breaking change");
+ok(/omatic_set_active_connection/.test(readmeText), "P3 README documents the set_active_connection migration");
+ok(/omatic_select_factory/.test(readmeText), "P3 README documents the select_factory migration");
+ok(
+  /Codex[\s\S]{0,400}?restart/i.test(readmeText),
+  "P3 README warns Codex users they must restart deliberately"
+);
+ok(
+  /never prompted to update/i.test(readmeText),
+  "P3 README states Codex users are never prompted to update"
 );
 
 if (failures.length) {

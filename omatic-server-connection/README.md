@@ -132,9 +132,34 @@ Fresh machines: run `npm install` once inside `server/` if `node_modules/` is ab
 | `omatic_list_tasks` / `omatic_record_decision` / `omatic_record_session_event` / `omatic_record_probe_result` | Factory state writes |
 | `omatic_resolve_factory` | Reports the active factory and resolved `factory_file` path |
 | `omatic_claim_work` / `omatic_release_work` | Advisory work claims (if installed) |
-| `omatic_execute_sql` | Guarded SQL — `confirm_destructive=true` required for DDL/DML |
-| `o-matic-server-{factory}:execute_sql` | Raw SQL, modern name |
-| `postgres-cabinet-{factory}:execute_sql` | Raw SQL, legacy alias — retained for backward compatibility |
+| `omatic_execute_sql` | Guarded SQL — `confirm_destructive=true` required for DDL/DML. **The only SQL path.** |
+| `omatic_select_factory` | Pin the active factory explicitly by `project_root` or `factory_json_path` |
+| `omatic_add_connection` / `omatic_list_connections` / `omatic_remove_connection` | Manage connections in `.omatic/factory.json` |
+| `omatic_set_active_connection` | Switch the session's active connection without restarting |
+
+That is the complete base surface: **19 base tools**, plus **15 pinned variants**
+(3 families × 5 configured connections) for a total of **34**.
+
+### Pinned per-connection variants
+
+Exactly three base tools accept a `:{connection}` suffix to pin one call to one
+configured connection regardless of the session's active default:
+
+| Pinned family | Example |
+|---|---|
+| `omatic_execute_sql:{connection}` | `omatic_execute_sql:kb` |
+| `omatic_search_memory:{connection}` | `omatic_search_memory:kb` |
+| `omatic_list_tasks:{connection}` | `omatic_list_tasks:kb` |
+
+Every other tool — including startup, health check, embedding status, and all
+the `record_*` writers — follows the **active** connection. Reach another
+connection with those by calling `omatic_set_active_connection` first.
+
+A pinned name is only published if it fits the host's tool-name budget. Codex
+namespaces tools as `mcp__<server>__<tool>` and silently truncates past 64
+bytes, so an over-long connection name would arrive mangled. Such variants are
+omitted rather than emitted broken, and the omission is disclosed on the base
+tool's own description.
 
 ## LLM Usage Guidance
 
@@ -173,11 +198,111 @@ output redacts secret-looking values.
 omatic_resolve_factory
 ```
 
-Expect `factory_file` pointing at your project's `.omatic/factory.json` and `active_connection` matching its `factory_id`. Then run `o-matic-server-{factory}:execute_sql` with `SELECT 1` to confirm the connection is live.
+Expect `factory_file` pointing at your project's `.omatic/factory.json` and `active_connection` matching its `factory_id`. Then run `omatic_execute_sql` with `SELECT 1` to confirm the connection is live — or `omatic_execute_sql:{connection}` to verify one specific connection.
 
 ---
 
 ## Changelog
+
+- **3.0.0** — **BREAKING: the tool surface was cut from 99 tools to 34.**
+
+  ### What was removed
+
+  Ten pinned tool families no longer exist. Any call to one of these now fails
+  with an unknown-tool error:
+
+  | Removed | Replacement |
+  |---|---|
+  | `o-matic-server-{factory}:execute_sql` | `omatic_execute_sql` (guarded) |
+  | `postgres-cabinet-{factory}:execute_sql` | `omatic_execute_sql` (guarded) |
+  | `omatic_factory_startup:{connection}` | `omatic_factory_startup` after `omatic_set_active_connection` |
+  | `omatic_factory_startup_run:{connection}` | `omatic_factory_startup_run` after `omatic_set_active_connection` |
+  | `omatic_factory_health_check:{connection}` | `omatic_factory_health_check` after `omatic_set_active_connection` |
+  | `omatic_embedding_status:{connection}` | `omatic_embedding_status` after `omatic_set_active_connection` |
+  | `omatic_usage_guide:{connection}` | `omatic_usage_guide` after `omatic_set_active_connection` |
+  | `omatic_resolve_factory:{connection}` | `omatic_resolve_factory` after `omatic_set_active_connection` |
+  | `omatic_record_decision:{connection}`, `omatic_record_session_event:{connection}`, `omatic_record_probe_result:{connection}` | the unsuffixed writer after `omatic_set_active_connection` |
+  | `omatic_claim_work:{connection}`, `omatic_release_work:{connection}` | the unsuffixed tool after `omatic_set_active_connection` |
+
+  The two raw `execute_sql` aliases were removed for a second reason beyond
+  surface size: they invoked the SQL handler with the destructive-SQL guard
+  disabled. They were the one door through which `DELETE FROM tasks` reached
+  the database without `confirm_destructive=true`. That door is gone, not
+  merely defaulted shut.
+
+  **Surviving pinned families — exactly three:** `omatic_execute_sql`,
+  `omatic_search_memory`, `omatic_list_tasks`.
+
+  ### Why
+
+  Codex namespaces every MCP tool as `mcp__<server>__<tool>`, folds
+  non-alphanumerics to `_`, and enforces a 64-byte ceiling. On overflow it
+  **silently** truncates and appends a hash. At 99 tools, 22 of ours were being
+  mangled — the model called a name that did not match what we published, and
+  two long names could collide into one with nothing logged. A smaller surface
+  with disclosed omissions is the fix.
+
+  ### Migration
+
+  Replace a pinned call with two steps:
+
+  ```text
+  omatic_set_active_connection { "name": "kb" }
+  omatic_factory_health_check
+  ```
+
+  For `omatic_execute_sql`, `omatic_search_memory`, and `omatic_list_tasks`
+  nothing changes — keep using `omatic_search_memory:kb` directly.
+
+  To pin the whole *factory* rather than a connection, use
+  `omatic_select_factory` with an explicit `project_root` or
+  `factory_json_path`. Do this before any startup call: the plugin's process
+  CWD is host-dependent and is not necessarily your project folder, so an
+  unpinned resolve can fail with "No O-Matic Server connection is configured
+  for this project."
+
+  `omatic_set_active_connection` is a **between-task** operation. Switching
+  mid-flow — during a multi-call startup sequence, say — can produce
+  cross-tenant results.
+
+  ### ⚠️ Codex users must restart deliberately
+
+  The server declares `capabilities.tools.listChanged: true` and emits
+  `notifications/tools/list_changed`, so **Claude Code 2.1.0+ picks the new
+  surface up automatically**.
+
+  **Codex does not.** Codex users are never prompted to update and will keep
+  calling the old 99-tool surface from a cached tool list until the MCP server
+  is restarted. Nothing warns you; the calls simply fail with unknown-tool
+  errors, or worse, resolve against a stale mangled name. **Restart Codex
+  deliberately after upgrading to 3.0.** This is not automatic and there is no
+  notification.
+
+  ### Also in 3.0
+
+  - **Response layer (#4 A1–A3, A9):** every response carries an `outcome` of
+    `complete` | `degraded` | `failed` | `no_op`, plus `degraded_reasons`,
+    `no_op_reasons`, and `results_trustworthy`. A handler can no longer emit a
+    clean result once a constituent query has errored, and the envelope cannot
+    be spoofed by handler-supplied keys.
+  - **`no_op` (#4 A9):** zero-row mutations are no longer reported as
+    `complete`. `omatic_release_work` releasing a claim you do not hold now
+    returns `outcome: "no_op"` — previously indistinguishable from a real
+    release. `complete` and a non-empty `degraded_reasons` remain structurally
+    unable to coexist.
+  - **Probe honesty (#4 A15):** the built-in startup probe derives its status
+    from the observed result of the `factory_sessions` INSERT and the readiness
+    seed. It previously hard-coded `status: "connected"` and the note
+    "database query path verified" before any measurement had been taken, so a
+    dead seed still produced a green authoritative row in
+    `mcp_registry.probe_status`.
+  - **Asserted vs measured probes (#4 A6):** caller-supplied `probes[]` are
+    echoed back as `caller_asserted` with `recorded: false` and never reach
+    `mcp_registry.probe_status`. Use `omatic_record_probe_result` for a probe
+    you actually ran.
+  - **Dependencies:** `@modelcontextprotocol/sdk` bumped to `^1.30.0`, clearing
+    all 7 open advisories (2 high, 4 moderate, 1 low) in the transitive tree.
+    `npm audit` reports 0 vulnerabilities.
 
 - **2.1.7** — Governed memory lifecycle + Embedder worker.
   - Added `server/embedder-worker.js` and the `embed-o-matic-embedder` skill contract. Embedder refreshes vectors for admitted Tier 1/Tier 2 rows only; it does not decide truth, promotion, retirement, contradiction resolution, or authority.
@@ -226,7 +351,7 @@ Expect `factory_file` pointing at your project's `.omatic/factory.json` and `act
   - **A1**: Claude Code manifest now sets `OMATIC_PROJECT_ROOT=${CLAUDE_PROJECT_DIR}` (was `${CLAUDE_PLUGIN_ROOT}`, which pointed the plugin at its own install dir and broke walk-up discovery). Codex unchanged — its CWD already resolves to the project root.
   - **A2**: Server declares `capabilities.tools.listChanged: true` and emits `notifications/tools/list_changed` after add/remove/set_active. Claude Code 2.1.0+ refreshes its tool list automatically — no restart needed.
   - **A3**: New `omatic_set_active_connection` tool switches the session's active connection without restart. Between-task only.
-  - **A4**: Per-connection variants of base tools (`omatic_factory_startup:selife`, `omatic_execute_sql:thenest`, etc.) pin calls to a specific configured connection regardless of active default. Unsuffixed names still hit the default.
+  - **A4**: Per-connection variants of base tools (`omatic_factory_startup:selife`, `omatic_execute_sql:thenest`, etc.) pin calls to a specific configured connection regardless of active default. Unsuffixed names still hit the default. *(Superseded in 3.0 — the pinned surface is now only `omatic_execute_sql`, `omatic_search_memory`, and `omatic_list_tasks`. See the 3.0 entry above.)*
   - **A5**: Cowork `.mcpb` extension and Claude Code / Codex plugin now share one source. `omatic-server-connection/{connections,tools,index}.js` are copies of `plugins/omatic-server/server/*`. No more drift.
   - **A6**: Cowork extension gains a `factory_json_path` user_config field. Set it to an absolute path to an existing `.omatic/factory.json` and the extension reads connections from that file, bypassing the Desktop UI fields. Bridge between Cowork and Claude Code / Codex project configs.
   - **A8**: `writeFactoryConfig` now writes atomically (temp file + rename). Prevents lost updates from concurrent worktrees or surfaces.
