@@ -29,10 +29,9 @@
       "status": "full",
       "hosts": [
         "codex",
-        "claude-code",
-        "cowork-with-mcp-config"
+        "claude-code"
       ],
-      "notes": "Full operation requires an MCP-capable host that can launch server/index.js over stdio and provide a project .omatic/factory.json or equivalent connection config."
+      "notes": "Full operation requires an MCP-capable host that can launch server/index.js over stdio and provide a project .omatic/factory.json or equivalent connection config. Verified on codex and claude-code by live end-to-end test 2026-08-02."
     },
     "prompt_only_hosts": {
       "status": "limited",
@@ -42,6 +41,13 @@
         "generic-chat"
       ],
       "notes": "Prompt-only hosts can load bundled skills as behavior instructions, but cannot perform factory DB operations unless connected through an external MCP bridge or a separate tool adapter."
+    },
+    "unverified_hosts": {
+      "status": "unverified",
+      "hosts": [
+        "cowork-with-mcp-config"
+      ],
+      "notes": "Cowork has never been tested end-to-end and no O-Matic extension is installed there. Process lifecycle, working directory, tools/list_changed honouring and ${CLAUDE_PLUGIN_DATA} availability are all unestablished. Rule #284 forbids claiming factory DB capability that has not been demonstrated, so Cowork is listed here rather than under mcp_hosts until a live session proves it. The server may well work there - the point is that nobody has shown it does."
     }
   },
   "adapters": {

@@ -20,3 +20,6 @@ jobs:
       - name: omatic-server-connection smoke suite
         working-directory: omatic-server-connection/server
         run: npm run check
+      - name: plugin-root check (the one a human runs)
+        working-directory: omatic-server-connection
+        run: npm run check
