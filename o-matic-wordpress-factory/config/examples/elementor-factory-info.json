@@ -6,28 +6,28 @@
       "siteUrl": "https://example.com",
       "username": "admin",
       "applicationPassword": "[example-redacted-application-password]",
-      "mcpPath": "/wp-json/mcp/elementor-mcp-server",
+      "mcpPath": "/wp-json/mcp/emcp-tools-server",
       "restApiRoot": "https://example.com/wp-json/",
       "wordpressVersion": "7.0",
       "lastVerifiedAt": "2026-06-13T00:00:00.000Z",
       "mcp": {
         "verifiedAt": "2026-06-13T00:00:00.000Z",
         "ok": true,
-        "endpoint": "https://example.com/wp-json/mcp/elementor-mcp-server",
+        "endpoint": "https://example.com/wp-json/mcp/emcp-tools-server",
         "toolCount": 20,
         "toolNames": [
-          "elementor_mcp_build_page",
-          "elementor_mcp_create_page",
-          "elementor_mcp_export_page",
-          "elementor_mcp_get_container_schema",
-          "elementor_mcp_get_widget_schema",
-          "elementor_mcp_list_pages",
-          "elementor_mcp_list_templates",
-          "elementor_mcp_list_widgets"
+          "emcp-tools-build-page",
+          "emcp-tools-create-page",
+          "emcp-tools-export-page",
+          "emcp-tools-get-container-schema",
+          "emcp-tools-get-widget-schema",
+          "emcp-tools-list-pages",
+          "emcp-tools-list-templates",
+          "emcp-tools-list-widgets"
         ],
         "tools": [
           {
-            "name": "elementor_mcp_build_page",
+            "name": "emcp-tools-build-page",
             "description": "Example cached Elementor MCP page build tool.",
             "inputSchema": {
               "type": "object",
@@ -35,7 +35,7 @@
             }
           },
           {
-            "name": "elementor_mcp_get_widget_schema",
+            "name": "emcp-tools-get-widget-schema",
             "description": "Example cached Elementor MCP widget schema tool.",
             "inputSchema": {
               "type": "object",
@@ -50,9 +50,9 @@
             "required": true,
             "available": true,
             "matchedTools": [
-              "elementor_mcp_get_container_schema",
-              "elementor_mcp_get_widget_schema",
-              "elementor_mcp_list_widgets"
+              "emcp-tools-get-container-schema",
+              "emcp-tools-get-widget-schema",
+              "emcp-tools-list-widgets"
             ]
           },
           {
@@ -61,8 +61,8 @@
             "required": true,
             "available": true,
             "matchedTools": [
-              "elementor_mcp_build_page",
-              "elementor_mcp_create_page"
+              "emcp-tools-build-page",
+              "emcp-tools-create-page"
             ]
           }
         ],
