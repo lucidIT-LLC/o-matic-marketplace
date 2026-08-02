@@ -8,12 +8,13 @@
 //   (d) monotonic   — catalog version must be >= the highest existing <plugin>-vX.Y.Z tag
 //   (e) parity      — root and .claude-plugin catalog files must be byte-identical
 //   (f) runtime     — runtime MCP server identity is read and reported, never silently skipped
+//   (g) undeclared  — a manifest that CARRIES a version but is not declared is a failure
 //
 // Exit 0 = aligned. Exit 1 = drift / regression / missing source. Designed for CI.
 //
 // Flags: --json (machine-readable report)  --no-tags (skip monotonicity; for shallow checkouts)
 
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import {
   loadMap,
   collectPlugin,
@@ -29,6 +30,17 @@ const skipTags = args.includes("--no-tags");
 
 const map = loadMap();
 const report = { ok: true, plugins: [], catalogParity: null };
+
+// Files a plugin can carry a version in. Presence on disk plus a `version` key
+// means it is a distribution surface and must be declared. Add to this list when
+// a new manifest kind appears; that is cheaper than discovering it in production.
+const WELL_KNOWN_VERSION_FILES = [
+  ".claude-plugin/plugin.json",
+  ".codex-plugin/plugin.json",
+  "agent-pack.json",
+  "package.json",
+  "server/package.json",
+];
 
 // (e) catalog parity.
 //
@@ -132,6 +144,34 @@ for (const name of Object.keys(map.plugins)) {
       source: "runtime",
       msg: "runtime MCP server identity is UNVERIFIED — declare a runtime source in version-sources.json (no silent 3-of-4)",
     });
+  }
+
+  // (g) undeclared version sources.
+  //
+  // A file that carries a `version` but is absent from version-sources.json is
+  // invisible to every check above, so it can ship a wrong version with nothing
+  // to catch it. This is not hypothetical: o-matic-wordpress-factory shipped
+  // 1.0.2 to Codex operators for exactly this reason while this gate printed
+  // "aligned ✅" — its .codex-plugin/plugin.json was never declared. Checking
+  // only what someone remembered to declare makes a green result meaningless.
+  for (const rel of WELL_KNOWN_VERSION_FILES) {
+    const abs = join(REPO_ROOT, name, rel);
+    if (!existsSync(abs)) continue;
+    let carriesVersion = false;
+    try {
+      carriesVersion = JSON.parse(readFileSync(abs, "utf8")).version != null;
+    } catch {
+      findings.push({ level: "fail", source: "undeclared", msg: `${name}/${rel} is unparseable` });
+      continue;
+    }
+    if (!carriesVersion) continue;
+    if (!p.sources.some((s) => s.path === `${name}/${rel}`)) {
+      findings.push({
+        level: "fail",
+        source: "undeclared",
+        msg: `${name}/${rel} carries a version but is not declared in version-sources.json — this gate cannot see it`,
+      });
+    }
   }
 
   // (d) monotonicity vs highest existing tag.

@@ -2,6 +2,25 @@
 
 All notable changes to the O-Matic WordPress Factory plugin are documented here.
 
+## 1.1.1 — 2026-08-02
+
+### Fixed
+- **Codex operators were shown version 1.0.2 while the catalog said 1.1.0.**
+  `.codex-plugin/plugin.json` and `agent-pack.json` were never bumped with the
+  1.1.0 release, and the rule #287 alignment gate reported `aligned ✅` because
+  neither file was declared in `scripts/version-sources.json` — a gate only
+  checks what someone remembered to list. The Codex plugin page read 1.0.2
+  accurately; the metadata was wrong, not the display. Both files now carry the
+  real version, and all six version sources agree.
+
+### Changed
+- **The alignment gate now fails on undeclared version sources (check `g`).** Any
+  file matching a well-known manifest name that carries a `version` key but is
+  absent from `version-sources.json` is a hard failure. This is what closes the
+  hole rather than the value: four other plugins carried an undeclared
+  `.codex-plugin/plugin.json` that happened to be correct, which is luck, not a
+  control. All are now declared.
+
 ## 1.0.1 — 2026-06-15
 
 ### Fixed

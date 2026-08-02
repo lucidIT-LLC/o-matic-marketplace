@@ -73,6 +73,18 @@
         },
         {
           "type": "json",
+          "path": "o-matic-wordpress-factory/agent-pack.json",
+          "field": "version",
+          "label": "agent-pack.json"
+        },
+        {
+          "type": "json",
+          "path": "o-matic-wordpress-factory/.codex-plugin/plugin.json",
+          "field": "version",
+          "label": "codex plugin.json"
+        },
+        {
+          "type": "json",
           "path": "o-matic-wordpress-factory/package.json",
           "field": "version",
           "label": "package.json"
@@ -103,6 +115,12 @@
           "path": "smith/.claude-plugin/plugin.json",
           "field": "version",
           "label": "plugin.json"
+        },
+        {
+          "type": "json",
+          "path": "smith/.codex-plugin/plugin.json",
+          "field": "version",
+          "label": "codex plugin.json"
         }
       ]
     },
@@ -118,6 +136,12 @@
           "path": "jo/.claude-plugin/plugin.json",
           "field": "version",
           "label": "plugin.json"
+        },
+        {
+          "type": "json",
+          "path": "jo/.codex-plugin/plugin.json",
+          "field": "version",
+          "label": "codex plugin.json"
         }
       ]
     },
@@ -133,6 +157,12 @@
           "path": "tim/.claude-plugin/plugin.json",
           "field": "version",
           "label": "plugin.json"
+        },
+        {
+          "type": "json",
+          "path": "tim/.codex-plugin/plugin.json",
+          "field": "version",
+          "label": "codex plugin.json"
         }
       ]
     },
@@ -148,6 +178,12 @@
           "path": "rimmer/.claude-plugin/plugin.json",
           "field": "version",
           "label": "plugin.json"
+        },
+        {
+          "type": "json",
+          "path": "rimmer/.codex-plugin/plugin.json",
+          "field": "version",
+          "label": "codex plugin.json"
         }
       ]
     }
