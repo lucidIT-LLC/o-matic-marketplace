@@ -1,0 +1,22 @@
+name: smoke
+
+# 188 assertions guarded this release and nothing ran them automatically.
+# The suite is pure logic — no DB, no network — so there is no reason it
+# should only run when someone remembers to.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: omatic-server-connection smoke suite
+        working-directory: omatic-server-connection/server
+        run: npm run check
