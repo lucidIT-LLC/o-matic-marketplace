@@ -19,7 +19,7 @@ const {
   setNotifyToolsChanged,
 } = require("./tools.js");
 
-const PLUGIN_VERSION = "3.0.0";
+const PLUGIN_VERSION = "3.0.1";
 
 // `--version` must answer and exit. It previously fell through to main(), which
 // booted the whole server, resolved a factory, and only exited when stdin closed

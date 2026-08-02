@@ -132,13 +132,122 @@ Fresh machines: run `npm install` once inside `server/` if `node_modules/` is ab
 | `omatic_list_tasks` / `omatic_record_decision` / `omatic_record_session_event` / `omatic_record_probe_result` | Factory state writes |
 | `omatic_resolve_factory` | Reports the active factory and resolved `factory_file` path |
 | `omatic_claim_work` / `omatic_release_work` | Advisory work claims (if installed) |
-| `omatic_execute_sql` | Guarded SQL — `confirm_destructive=true` required for DDL/DML. **The only SQL path.** |
+| `omatic_execute_sql` | Guarded SQL — `confirm_destructive=true` required for DDL/DML. **The only SQL path.** The target connection's permission is enforced first and cannot be overridden |
 | `omatic_select_factory` | Pin the active factory explicitly by `project_root` or `factory_json_path` |
-| `omatic_add_connection` / `omatic_list_connections` / `omatic_remove_connection` | Manage connections in `.omatic/factory.json` |
+| `omatic_list_connections` | Every configured connection with **live reachability**, the **negotiated** TLS state, and its **permission**. Passwords are never returned |
+| `omatic_test_connection` | Try a host, database, user and password and report what actually happened. Saves nothing, mutates nothing |
+| `omatic_add_connection` / `omatic_edit_connection` | Create or change a connection. Both **test-connect before writing**; a failed probe returns the real Postgres error and writes nothing |
+| `omatic_remove_connection` | Drop a connection from `.omatic/factory.json` |
 | `omatic_set_active_connection` | Switch the session's active connection without restarting |
 
-That is the complete base surface: **19 base tools**, plus **15 pinned variants**
-(3 families × 5 configured connections) for a total of **34**.
+That is the complete base surface: **21 base tools**, plus **15 pinned variants**
+(3 families × 5 configured connections) for a total of **36**.
+
+## The connection surface
+
+The question this answers is "which of my databases actually work, and what is
+Claude allowed to do to them" — without leaving the session and without opening
+a JSON file.
+
+```
+omatic_list_connections {}
+```
+
+Returns, per connection: `name`, `host`, `port`, `database`, `user`,
+`ssl_mode_configured`, `permission`, and — measured by that call, not read from
+config — `reachable`, `latency_ms`, `connected_database`, `connected_user`,
+`ssl_negotiated`, `tls_protocol`, `tls_cipher`, `tls_authorized`.
+
+**Configured and negotiated are separate fields.** `ssl_mode_configured` is what
+`factory.json` asks for; `ssl_negotiated` and the `tls_*` fields are what the
+handshake actually produced. When they disagree, the negotiated ones are true.
+
+**The password is never returned** — not the value, and not a mask standing in
+its place. `password_configured` is a boolean about presence and says nothing
+about the secret, including its length. Every response in this surface passes a
+credential assertion on the way out; a credential-shaped field that holds a
+value raises an error instead of shipping.
+
+An unreachable connection carries the real Postgres error and marks the whole
+response `degraded` — the listing succeeded, the factory did not.
+
+### Testing before committing
+
+```
+omatic_test_connection {
+  "host": "cabinet.blue-triggerfish.ts.net",
+  "database": "o-matic",
+  "user": "o-matic-llm",
+  "password": "…",
+  "ssl_mode": "disable"
+}
+```
+
+Nothing is saved and no stored configuration changes. Pass `connection` instead
+to re-test an existing connection, optionally overriding a single field (a new
+password, say) for that test only. A failed test returns the server's own error
+text and is reported as a failure, not as a clean envelope around bad news.
+
+### Writes are proven, not assumed
+
+`omatic_add_connection` and `omatic_edit_connection` both test-connect before
+writing. A failed probe returns the raw Postgres error and the file is never
+opened — a saved connection that has never connected is the exact lie this
+release removes. After a successful write the file is read back and the
+response reports `persisted: true` only if the read-back matches.
+
+`omatic_edit_connection` merges over what is on disk, so changing a password
+does not require re-sending the host, port, database and user. Changed fields
+are reported by name; a password change is named, never shown.
+
+`test: false` remains available for staging a connection to a host that is
+currently down, but such a write can never come back clean: the response is
+`degraded` with the reason *"has never been proven to connect"*.
+
+### Per-connection permissions
+
+Every connection carries a `permission`, stored in `factory.json` beside the
+host and user:
+
+| Permission | Effect |
+|---|---|
+| `read_write` | Everything works. The default — existing `factory.json` files are unaffected |
+| `read_only` | Reads work. Every write, DDL and DML is refused **before it reaches the database** |
+| `disabled` | The connection resolves and is listed, but no tool will use it. Visible, deliberately parked |
+
+```
+omatic_edit_connection { "name": "benecard", "permission": "read_only" }
+```
+
+`benecard` is a client database and `dbadmin` connects as a superuser. Before
+this, the only thing preventing a tool writing to either was the model choosing
+not to — a rule loaded, not a rule obeyed. The permission is **enforced**, in
+one chokepoint, for every tool and every pinned variant, before any handler runs
+and before any pool opens:
+
+- There is **no argument, flag or alias that bypasses it.** `confirm_destructive`
+  is the operator approving a destructive statement, not the operator overriding
+  a connection's mode.
+- A tool with no explicit classification is treated as a **write**. The guard
+  fails closed.
+- Statement classification strips comments and string literals first, and
+  catches the cases a leading-keyword check misses: a `DELETE` hidden in a CTE,
+  a write batched behind a `SELECT`, `SELECT … INTO`, `SELECT … FOR UPDATE`.
+- A `read_only` connection's pool additionally runs with
+  `default_transaction_read_only=on`, so if a write ever slipped past the
+  classifier PostgreSQL refuses it too.
+- A `disabled` connection cannot be made the session default, and
+  `ConnectionManager.getPool()` will not open it by any route.
+
+The connection surface itself — list, test, add, edit, remove, set-active —
+stays available at every permission level. Locking it behind the mode it manages
+would strand the operator with no way back.
+
+A refusal names the connection, the mode, and the tool that was stopped:
+
+> Refused: connection "benecard" is read_only. `omatic_execute_sql` performs a
+> write, so it was stopped at the tool layer and never reached the database.
+> Reads against this connection still work.
 
 ### Pinned per-connection variants
 

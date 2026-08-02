@@ -1,5 +1,72 @@
 # Changelog
 
+## 3.0.1 - 2026-08-02
+
+Section C — the connection surface. 3.0.0 shipped an honest response envelope
+and a cut tool surface; the connections themselves were still the one part an
+operator could not see, test, or control from inside a session.
+
+Additive. No breaking changes, no changes to the tier model or the doctrine.
+Existing `.omatic/factory.json` files behave exactly as before.
+
+### Added
+
+- **`omatic_test_connection`** — try a host, port, database, user, password and
+  ssl_mode and report what actually happened. Saves nothing, mutates no stored
+  config. Also re-tests an existing connection by name, optionally overriding a
+  single field (a new password) for that test only. A failed test returns the
+  server's own error text and is reported as a failure, not as a clean envelope.
+- **`omatic_edit_connection`** — change one or more fields on an existing
+  connection. Merges over what is on disk, so fixing a password no longer means
+  re-sending host, port, database and user. The merged result is test-connected
+  before anything is written; a failed test leaves the stored connection
+  untouched. Changed fields are reported by name; a password change is named,
+  never shown.
+- **Per-connection permissions** — `read_write` (default), `read_only`, or
+  `disabled`, stored in `factory.json` beside host and user and settable via
+  `omatic_edit_connection`. Enforced at the tool layer in one chokepoint, for
+  every tool and every pinned variant, before any handler runs and before any
+  pool opens. There is no argument, flag or alias that bypasses it —
+  `confirm_destructive` is the operator approving a destructive statement, not
+  the operator overriding a connection's mode. An unclassified tool is treated
+  as a write: the guard fails closed. A `read_only` pool additionally runs with
+  `default_transaction_read_only=on`, so the database refuses writes too.
+
+### Changed
+
+- **`omatic_list_connections` reports live state.** Per connection: reachability
+  measured by that call, the negotiated TLS state (protocol, cipher, authorized
+  — the D9 `TLSSocket` readback, previously computed and never surfaced), and
+  the permission. Configured and negotiated are separate fields; an unreachable
+  connection carries the real Postgres error and marks the response `degraded`.
+- **The password is no longer returned in any form.** The listing previously
+  emitted `password: "***"`. That slot is now `password_configured`, a boolean
+  about presence that says nothing about the secret including its length. Every
+  response in this surface passes a credential assertion on the way out.
+- **`omatic_add_connection` reports the write it proved.** A failed probe now
+  returns the raw Postgres error in a dedicated `postgres_error` field alongside
+  `wrote: false`, and successful writes are read back from disk before
+  `persisted: true` is reported. `test: false` still stages a connection to a
+  down host, but the response is `degraded` with the reason "has never been
+  proven to connect" — it can no longer come back clean.
+- **The unresolved-factory error (B4) names the connection surface.** An
+  operator with no factory configured is told how to see, test, add, fix and
+  remove connections, not only how to pin a factory.
+- **`omatic_usage_guide` reports the real plugin version.** It had returned a
+  hardcoded `2.1.0` through all of 3.0. It now reads the manifest, which
+  `version-align.mjs` keeps in step with the canonical catalog entry.
+- Tool surface: **34 → 36** (21 base + 15 pinned). No pinned variants are added.
+
+### Tests
+
+Smoke suite **247 → 659 assertions**, run by CI on every push. Covers the
+credential guard, configured-vs-negotiated separation, merge semantics,
+probe-target resolution, every write path against a real temp-dir
+`factory.json` with an injected probe (so "writes nothing on failure" is proven
+by reading the file), all three permission modes, and the bypass attempts —
+`confirm_destructive`, CTE-hidden writes, batched writes, `SELECT … INTO`,
+`SELECT … FOR UPDATE`, and pinned-versus-unsuffixed parity.
+
 ## 3.0.0 - 2026-08-02
 
 **Operator-facing notes: see [`RELEASE-NOTES-3.0.0.md`](RELEASE-NOTES-3.0.0.md).**

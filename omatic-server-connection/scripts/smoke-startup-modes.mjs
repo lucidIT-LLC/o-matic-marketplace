@@ -485,7 +485,9 @@ const fakeConnections = (names = FIVE) => ({
 });
 
 const surface = buildToolList(fakeConnections());
-ok(surface.length === 34, `B8 tool surface is 34, was 99 (got ${surface.length})`);
+// 34 in 3.0.0, was 99 before B8. Section C adds two base tools with no pinned
+// variants — omatic_test_connection and omatic_edit_connection — so 36.
+ok(surface.length === 36, `B8 tool surface is 36, was 99 (got ${surface.length})`);
 ok(
   surface.filter((t) => t.name.includes(":")).length === 15,
   "B8 pinned variants are 3 families x 5 connections = 15"
@@ -1162,6 +1164,1074 @@ ok(
   /never prompted to update/i.test(readmeText),
   "P3 README states Codex users are never prompted to update"
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section C — the connection surface (issue #6)
+//
+// The operator's ask: see the connections, test one, fix a bad one, without
+// leaving the session. The failure modes these guard against are all the same
+// shape — a response that looks fine and isn't. A saved connection that never
+// connected. A "***" where a credential used to be. A configured sslmode
+// reported as if it were the negotiated one. A write reported as successful
+// when the probe failed.
+//
+// Every write path below runs against a real temp-dir factory.json with an
+// injected probe, so "writes nothing on failure" is proven by reading the file,
+// not by trusting the response.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const {
+  describeConnectionRow,
+  assertNoCredentials,
+  buildConnEntryFromArgs,
+  mergeConnEntry,
+  connEntryDiff,
+  buildProbeTarget,
+  normalizeSslModeArg,
+  normalizePortArg,
+  EDITABLE_CONN_FIELDS,
+  setProbeConnection,
+  resetProbeConnection,
+} = __test__;
+
+const osMod = require("node:os");
+const pathMod = require("node:path");
+const connectionsMod = require(resolve(here, "../server/connections.js"));
+
+// Asserts that fn throws. Declared up front — several blocks below use it.
+const throwsWith = (fn, label) => {
+  try {
+    fn();
+    failures.push(label);
+  } catch {
+    pass++;
+  }
+};
+
+const SECRET = "hunter2-do-not-emit-this";
+const cfgFixture = {
+  name: "omatic",
+  host: "cabinet.blue-triggerfish.ts.net",
+  port: 5432,
+  database: "o-matic",
+  user: "o-matic-llm",
+  password: SECRET,
+  sslMode: "disable",
+  // parseConnectionEntry always materializes a permission, so a fixture without
+  // one is not a shape the rest of the system ever produces.
+  permission: "read_write",
+};
+
+// ── C1: the listing row ──
+const okProbe = {
+  ok: true,
+  info: { database: "o-matic", user: "o-matic-llm" },
+  latency_ms: 12,
+  ssl: {
+    configured: "disable",
+    negotiated: "plaintext",
+    encrypted: false,
+    protocol: null,
+    cipher: null,
+    authorized: null,
+    fell_back: false,
+  },
+};
+const tlsProbe = {
+  ok: true,
+  info: { database: "o-matic", user: "o-matic-llm" },
+  latency_ms: 30,
+  ssl: {
+    configured: "require",
+    negotiated: "encrypted",
+    encrypted: true,
+    protocol: "TLSv1.3",
+    cipher: { name: "TLS_AES_256_GCM_SHA384" },
+    authorized: false,
+    authorization_error: "self signed certificate",
+    fell_back: true,
+  },
+};
+const failProbe = {
+  ok: false,
+  latency_ms: 8,
+  error: 'password authentication failed for user "o-matic-llm"',
+  ssl: { configured: "disable", negotiated: null, encrypted: null },
+};
+
+const rowUnprobed = describeConnectionRow(cfgFixture, null);
+const rowOk = describeConnectionRow(cfgFixture, okProbe);
+const rowTls = describeConnectionRow({ ...cfgFixture, sslMode: "require" }, tlsProbe);
+const rowFail = describeConnectionRow(cfgFixture, failProbe);
+
+// The whole reason this section exists: the password must not be in the answer.
+// Not the value, not a placeholder standing in its slot, not a length hint.
+for (const [label, row] of [["unprobed", rowUnprobed], ["ok", rowOk], ["tls", rowTls], ["fail", rowFail]]) {
+  ok(!("password" in row), `C1 ${label} row has no password key at all`);
+  ok(!JSON.stringify(row).includes(SECRET), `C1 ${label} row does not contain the password value`);
+  ok(!/\*{2,}/.test(JSON.stringify(row)), `C1 ${label} row emits no masked-password placeholder`);
+}
+ok(rowOk.password_configured === true, "C1 password_configured reports presence as a boolean");
+ok(
+  describeConnectionRow({ ...cfgFixture, password: "" }, okProbe).password_configured === false,
+  "C1 password_configured is false when no password is set"
+);
+ok(
+  describeConnectionRow({ ...cfgFixture, password: "x" }, okProbe).password_configured ===
+    describeConnectionRow({ ...cfgFixture, password: "xxxxxxxxxxxxxxxxxxxx" }, okProbe).password_configured,
+  "C1 password_configured is identical for a 1-char and a 20-char password (no length leak)"
+);
+
+ok(rowUnprobed.reachable === null, "C1 an unprobed row reports reachable:null, not false");
+ok(rowUnprobed.reachability_checked === false, "C1 an unprobed row says reachability was not checked");
+ok(rowOk.reachable === true && rowOk.reachability_checked === true, "C1 a successful probe reports reachable:true");
+ok(rowFail.reachable === false, "C1 a failed probe reports reachable:false");
+ok(rowFail.probe_error === failProbe.error, "C1 the failed row carries the raw Postgres error, unparaphrased");
+ok(rowOk.probe_error === null, "C1 a reachable row carries no probe error");
+ok(rowOk.latency_ms === 12, "C1 the row reports measured latency");
+ok(rowOk.connected_database === "o-matic", "C1 the row reports the database actually connected to");
+ok(rowOk.connected_user === "o-matic-llm", "C1 the row reports the user actually connected as");
+ok(rowFail.connected_database === null, "C1 a failed probe reports no connected database");
+
+// Configured vs negotiated as separate fields — the point of C1.
+ok("ssl_mode_configured" in rowTls && "ssl_negotiated" in rowTls, "C1 configured and negotiated TLS are separate keys");
+ok(rowTls.ssl_mode_configured === "require", "C1 ssl_mode_configured reflects the config, not the handshake");
+ok(rowTls.ssl_negotiated === "encrypted", "C1 ssl_negotiated reflects the handshake, not the config");
+ok(rowOk.ssl_mode_configured === "disable" && rowOk.ssl_negotiated === "plaintext", "C1 the two fields can agree");
+ok(
+  rowTls.ssl_mode_configured !== rowTls.ssl_negotiated,
+  "C1 the two fields can disagree without either being overwritten"
+);
+ok(rowTls.tls_protocol === "TLSv1.3", "C1 the negotiated TLS protocol is reported (D9 readback)");
+ok(rowTls.tls_cipher === "TLS_AES_256_GCM_SHA384", "C1 the negotiated cipher name is reported");
+ok(rowTls.tls_authorized === false, "C1 the peer-authorization result is reported");
+ok(rowTls.tls_authorization_error === "self signed certificate", "C1 the authorization error is reported verbatim");
+ok(rowTls.ssl_fell_back === true, "C1 an sslmode fallback is disclosed");
+ok(rowTls.encrypted === true && rowOk.encrypted === false, "C1 encrypted is a measured boolean, not the config");
+
+// ── assertNoCredentials: defence in depth on every response ──
+let credThrew = false;
+try {
+  assertNoCredentials({ note: `dsn=postgres://u:${SECRET}@h/db` }, [SECRET]);
+} catch {
+  credThrew = true;
+}
+ok(credThrew, "C1 assertNoCredentials throws rather than shipping a payload containing a credential");
+ok(
+  assertNoCredentials({ name: "omatic", host: "h" }, [SECRET]).name === "omatic",
+  "C1 assertNoCredentials passes a clean payload through unchanged"
+);
+ok(
+  assertNoCredentials({ password_configured: false }, ["", null, undefined]).password_configured === false,
+  "C1 assertNoCredentials ignores empty secrets rather than matching everything"
+);
+let nestedThrew = false;
+try {
+  assertNoCredentials({ a: { b: [{ c: SECRET }] } }, [SECRET]);
+} catch {
+  nestedThrew = true;
+}
+ok(nestedThrew, "C1 assertNoCredentials catches a credential nested anywhere in the payload");
+
+// The structural half. A substring scan cannot help with a short password —
+// a one-character secret matches almost any response — so a credential-shaped
+// key holding anything but a presence boolean is rejected on sight, with no
+// reference to the secret at all.
+throwsWith(() => assertNoCredentials({ password: "p" }, []), "C1 a password key holding a value is rejected outright");
+throwsWith(() => assertNoCredentials({ password: "***" }, []), "C1 a masked-password placeholder is rejected too");
+throwsWith(
+  () => assertNoCredentials({ conns: [{ name: "a", db_password: "x" }] }, []),
+  "C1 a credential-shaped key nested in an array is rejected"
+);
+throwsWith(() => assertNoCredentials({ api_key: "sk-1" }, []), "C1 an api_key field is rejected");
+throwsWith(() => assertNoCredentials({ token: "t" }, []), "C1 a token field is rejected");
+ok(
+  assertNoCredentials({ password_configured: true, nested: { password_configured: false } }, []).password_configured ===
+    true,
+  "C1 a credential-shaped key holding a presence boolean is allowed — that is the design"
+);
+ok(
+  assertNoCredentials({ password_configured: null }, []).password_configured === null,
+  "C1 an unknown presence flag (null) is allowed"
+);
+ok(
+  assertNoCredentials({ note: "short secrets are not substring-scannable" }, ["p", "ab"]).note.length > 0,
+  "C1 a sub-8-character secret does not trigger the substring scan (it would match everything)"
+);
+
+// ── C2: merge semantics — an edit is not an overwrite ──
+const mergedPw = mergeConnEntry(cfgFixture, { password: "new-secret" });
+ok(mergedPw.password === "new-secret", "C2 an edit applies the supplied password");
+ok(mergedPw.host === cfgFixture.host, "C2 an edit carries the unsupplied host across unchanged");
+ok(mergedPw.database === cfgFixture.database, "C2 an edit carries the unsupplied database across unchanged");
+ok(mergedPw.sslMode === "disable", "C2 an omitted ssl_mode keeps the configured mode, it does not reset to a default");
+ok(mergeConnEntry(cfgFixture, { port: "5433" }).port === 5433, "C2 a string port is normalized to an integer");
+ok(mergeConnEntry(cfgFixture, { sslmode: "require" }).sslMode === "require", "C2 the libpq sslmode spelling is accepted");
+ok(mergeConnEntry(cfgFixture, { ssl_mode: "verify-full" }).sslMode === "verify-full", "C2 ssl_mode is accepted");
+
+throwsWith(() => mergeConnEntry(cfgFixture, { port: 0 }), "C2 an out-of-range port is rejected");
+throwsWith(() => mergeConnEntry(cfgFixture, { port: 70000 }), "C2 a port above 65535 is rejected");
+throwsWith(() => mergeConnEntry(cfgFixture, { port: "not-a-port" }), "C2 a non-numeric port is rejected");
+throwsWith(() => mergeConnEntry(cfgFixture, { ssl_mode: "sorta" }), "C2 an invalid ssl_mode is rejected");
+throwsWith(() => mergeConnEntry(cfgFixture, { host: "" }), "C2 an edit may not clear the host");
+throwsWith(() => mergeConnEntry(cfgFixture, { user: "" }), "C2 an edit may not clear the user");
+throwsWith(() => mergeConnEntry(cfgFixture, { database: "" }), "C2 an edit may not clear the database");
+throwsWith(() => buildConnEntryFromArgs({ name: "Bad Name!" }), "C2 an invalid connection name is rejected");
+throwsWith(() => normalizeSslModeArg({ ssl_mode: "tls" }, "require"), "C2 normalizeSslModeArg rejects an unknown mode");
+ok(normalizeSslModeArg({}, "disable") === "disable", "C2 normalizeSslModeArg falls back when nothing is supplied");
+ok(normalizePortArg(undefined, 5432) === 5432, "C2 normalizePortArg falls back when nothing is supplied");
+
+ok(
+  JSON.stringify(connEntryDiff(cfgFixture, mergedPw)) === JSON.stringify(["password"]),
+  "C2 the diff names the changed field"
+);
+ok(connEntryDiff(cfgFixture, cfgFixture).length === 0, "C2 the diff is empty when nothing moved");
+ok(
+  !JSON.stringify(connEntryDiff(cfgFixture, mergedPw)).includes("new-secret") &&
+    !JSON.stringify(connEntryDiff(cfgFixture, mergedPw)).includes(SECRET),
+  "C2 the diff names a password change without carrying either value"
+);
+ok(
+  connEntryDiff(cfgFixture, mergeConnEntry(cfgFixture, { host: "h2", user: "u2" })).join(",") === "host,user",
+  "C2 the diff names every changed field and nothing else"
+);
+ok(EDITABLE_CONN_FIELDS.includes("password") && !EDITABLE_CONN_FIELDS.includes("name"),
+  "C2 the connection name is not an editable field (remove and re-add instead)");
+
+// ── C3: probe-target resolution ──
+const fakeEnvFactory = (file) => ({ OMATIC_FACTORY_JSON_PATH: file, OMATIC_STATE_DIR: pathMod.dirname(file) });
+const tmpRoot = fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), "omatic-section-c-"));
+const factoryFile = pathMod.join(tmpRoot, "factory.json");
+const writeFactory = (conns) =>
+  fsMod.writeFileSync(
+    factoryFile,
+    JSON.stringify({ factory_id: "omatic", platform_profile: "claude-code", connections: conns }, null, 2)
+  );
+const readFactory = () => JSON.parse(fsMod.readFileSync(factoryFile, "utf8"));
+const storedConn = {
+  name: "omatic",
+  host: "cabinet.blue-triggerfish.ts.net",
+  port: 5432,
+  database: "o-matic",
+  user: "o-matic-llm",
+  password: SECRET,
+  ssl_mode: "disable",
+};
+
+const fakeConnMgr = () => {
+  const env = fakeEnvFactory(factoryFile);
+  return {
+    env: () => env,
+    project: () => ({ factory_id: "omatic", platform_profile: "claude-code", resolution: {} }),
+    names: () => ["omatic"],
+    defaultName: () => "omatic",
+    activeName: "omatic",
+    has: (n) => n === "omatic",
+    getConfig: () => cfgFixture,
+    reload: async () => ({ ok: true, total: 1, added: [], removed: [] }),
+  };
+};
+
+writeFactory([storedConn]);
+const mgr = fakeConnMgr();
+
+const discrete = buildProbeTarget(mgr, { host: "h", database: "d", user: "u", password: "p" });
+ok(discrete.entry.port === 5432, "C3 an unspecified port defaults to 5432");
+ok(discrete.entry.sslMode === "require", "C3 an unspecified ssl_mode defaults to require, never inferred from the host");
+ok(discrete.source === "supplied fields", "C3 the source of a discrete-field probe is reported");
+ok(
+  buildProbeTarget(mgr, { host: "100.64.1.1", database: "d", user: "u" }).entry.sslMode === "require",
+  "C3 a CGNAT/tailnet host does not silently downgrade ssl_mode (D5)"
+);
+ok(
+  buildProbeTarget(mgr, { database_url: "postgresql://u:p@h:5555/db" }).entry.port === 5555,
+  "C3 a database_url is parsed"
+);
+ok(buildProbeTarget(mgr, { connection: "omatic" }).entry.database === "o-matic", "C3 a stored connection can be probed by name");
+ok(
+  buildProbeTarget(mgr, { connection: "omatic" }).source === 'stored connection "omatic"',
+  "C3 probing a stored connection says so"
+);
+const overridden = buildProbeTarget(mgr, { connection: "omatic", password: "guess" });
+ok(overridden.entry.password === "guess", "C3 a field may be overridden for the test only");
+ok(overridden.entry.host === storedConn.host, "C3 an override leaves the rest of the stored connection intact");
+ok(/overridden for this test only/.test(overridden.source), "C3 an override is disclosed in the source string");
+ok(
+  readFactory().connections[0].password === SECRET,
+  "C3 resolving a probe target does not touch the stored config on disk"
+);
+throwsWith(() => buildProbeTarget(mgr, {}), "C3 a probe with no target at all is rejected");
+throwsWith(() => buildProbeTarget(mgr, { host: "h" }), "C3 a probe missing database and user is rejected");
+throwsWith(() => buildProbeTarget(mgr, { connection: "nope" }), "C3 an unknown stored connection name is rejected");
+throwsWith(() => buildProbeTarget(mgr, { database_url: "not-a-dsn" }), "C3 an unparseable database_url is rejected");
+
+// ── C2/C5: the write paths, proven against a real file ──
+const parseResp = (r) => JSON.parse(r.content[0].text);
+
+// Failing probe. The file must be untouched — that is the assertion, not the
+// response field claiming so.
+setProbeConnection(async () => ({
+  ok: false,
+  error: 'FATAL: password authentication failed for user "o-matic-llm"',
+  ssl: { configured: "disable", negotiated: null, encrypted: null },
+}));
+
+writeFactory([storedConn]);
+const addFail = await handleToolCall(fakeConnMgr(), "omatic_add_connection", {
+  name: "newconn",
+  host: "cabinet.blue-triggerfish.ts.net",
+  database: "o-matic",
+  user: "o-matic-llm",
+  password: "wrong",
+  ssl_mode: "disable",
+});
+const addFailBody = parseResp(addFail);
+ok(addFail.isError === true, "C2 add with a failing probe sets isError");
+ok(addFailBody.success === false, "C2 add with a failing probe is not a success");
+ok(addFailBody.outcome === "failed", "C2 add with a failing probe reports outcome=failed");
+ok(addFailBody.results_trustworthy === false, "C2 add with a failing probe is not trustworthy");
+ok(addFailBody.wrote === false, "C2 add with a failing probe reports wrote:false");
+ok(
+  addFailBody.postgres_error === 'FATAL: password authentication failed for user "o-matic-llm"',
+  "C2 add returns the real Postgres error verbatim, not a paraphrase"
+);
+ok(/password authentication failed/.test(addFailBody.error), "C2 the error summary carries the server's own words");
+ok(readFactory().connections.length === 1, "C2 add with a failing probe wrote NOTHING to factory.json");
+ok(!readFactory().connections.some((c) => c.name === "newconn"), "C2 the rejected connection is absent from the file");
+ok(!JSON.stringify(addFailBody).includes("wrong"), "C2 a rejected add does not echo the attempted password");
+
+// Failing probe on edit — the existing connection must survive intact.
+const editFail = await handleToolCall(fakeConnMgr(), "omatic_edit_connection", {
+  name: "omatic",
+  password: "also-wrong",
+});
+const editFailBody = parseResp(editFail);
+ok(editFail.isError === true, "C2 edit with a failing probe sets isError");
+ok(editFailBody.wrote === false && editFailBody.unchanged === true, "C2 edit with a failing probe changes nothing");
+ok(/password authentication failed/.test(editFailBody.postgres_error), "C2 edit returns the real Postgres error");
+ok(readFactory().connections[0].password === SECRET, "C2 a failed edit leaves the stored password exactly as it was");
+ok(!JSON.stringify(editFailBody).includes("also-wrong"), "C2 a rejected edit does not echo the attempted password");
+ok(
+  Array.isArray(editFailBody.would_have_changed) && editFailBody.would_have_changed.includes("password"),
+  "C2 a rejected edit says which field it would have changed"
+);
+
+// Unknown connection.
+const editMissing = parseResp(await handleToolCall(fakeConnMgr(), "omatic_edit_connection", { name: "ghost" }));
+ok(editMissing.success === false, "C2 editing a connection that does not exist fails");
+ok(/omatic_add_connection/.test(editMissing.error), "C2 the not-found error points at the tool that would create it");
+
+// Passing probe.
+setProbeConnection(async (entry) => ({
+  ok: true,
+  info: { database: entry.database, user: entry.user },
+  ssl: { configured: entry.sslMode, negotiated: "plaintext", encrypted: false, fell_back: false },
+}));
+
+const addOkBody = parseResp(
+  await handleToolCall(fakeConnMgr(), "omatic_add_connection", {
+    name: "newconn",
+    host: "cabinet.blue-triggerfish.ts.net",
+    database: "factory_commons",
+    user: "o-matic-llm",
+    password: SECRET,
+    ssl_mode: "disable",
+  })
+);
+ok(addOkBody.success === true && addOkBody.outcome === "complete", "C2 add with a passing probe succeeds cleanly");
+ok(addOkBody.persisted === true, "C5 add reports the write was read back from disk");
+ok(readFactory().connections.some((c) => c.name === "newconn"), "C5 the added connection is on disk");
+ok(addOkBody.verified.reachable === true, "C2 add reports the connection it just proved");
+ok(!JSON.stringify(addOkBody).includes(SECRET), "C2 a successful add never echoes the password");
+
+const editOkBody = parseResp(
+  await handleToolCall(fakeConnMgr(), "omatic_edit_connection", { name: "omatic", password: "fixed-secret" })
+);
+ok(editOkBody.success === true, "C2 edit with a passing probe succeeds");
+ok(JSON.stringify(editOkBody.changed_fields) === JSON.stringify(["password"]), "C2 edit names the field it changed");
+ok(readFactory().connections[0].password === "fixed-secret", "C5 the edited password is persisted to factory.json");
+ok(readFactory().connections[0].host === storedConn.host, "C2 the edit left every other field alone");
+ok(!JSON.stringify(editOkBody).includes("fixed-secret"), "C2 a successful edit never echoes the new password");
+ok(editOkBody.persisted === true, "C5 edit reports the write was read back from disk");
+
+// C5: a fresh manager reading the same file sees the edit — the respawn case.
+ok(
+  connectionsMod
+    .normalizeFactoryConnections(readFactory(), "omatic")
+    .find((c) => c.name === "omatic").password === "fixed-secret",
+  "C5 a fresh load of factory.json sees the edit (survives a respawn)"
+);
+ok(
+  connectionsMod.normalizeFactoryConnections(readFactory(), "omatic").some((c) => c.name === "newconn"),
+  "C5 a fresh load of factory.json sees the added connection"
+);
+
+// No-op edit.
+const noopBody = parseResp(
+  await handleToolCall(fakeConnMgr(), "omatic_edit_connection", { name: "omatic", password: "fixed-secret" })
+);
+ok(noopBody.outcome === "no_op", "C2 an edit that changes nothing reports outcome=no_op, not complete");
+ok(noopBody.wrote === false, "C2 a no-op edit does not rewrite the file");
+ok(noopBody.no_op_reasons.length > 0, "C2 a no-op edit says why nothing happened");
+
+// test=false must never come back clean.
+const unverifiedBody = parseResp(
+  await handleToolCall(fakeConnMgr(), "omatic_add_connection", {
+    name: "unverified",
+    host: "h",
+    database: "d",
+    user: "u",
+    password: "p",
+    ssl_mode: "disable",
+    test: false,
+  })
+);
+ok(unverifiedBody.outcome === "degraded", "C2 a connection written with test=false is degraded, never complete");
+ok(
+  unverifiedBody.degraded_reasons.some((r) => /never been proven to connect/.test(r)),
+  "C2 an unverified write says out loud that it has never connected"
+);
+ok(unverifiedBody.results_trustworthy === false, "C2 an unverified write is not trustworthy");
+
+// ── C1: the listing handler ──
+writeFactory([storedConn, { ...storedConn, name: "kb", database: "factory_commons" }]);
+
+const listNoProbe = parseResp(await handleToolCall(fakeConnMgr(), "omatic_list_connections", { probe: false }));
+ok(listNoProbe.probed === false, "C1 probe=false is honoured");
+ok(listNoProbe.connections.every((c) => c.reachability_checked === false), "C1 an unprobed listing says so per row");
+ok(listNoProbe.outcome === "complete", "C1 an unprobed listing is complete — it measured nothing and claims nothing");
+
+const listOk = parseResp(await handleToolCall(fakeConnMgr(), "omatic_list_connections", {}));
+ok(listOk.probed === true, "C1 probing is the default");
+ok(listOk.count === 2 && listOk.reachable_count === 2, "C1 the listing counts reachable connections");
+ok(listOk.outcome === "complete", "C1 an all-reachable listing is complete");
+ok(!JSON.stringify(listOk).includes(SECRET), "C1 the listing never contains a password");
+ok(listOk.connections.every((c) => !("password" in c)), "C1 no listing row carries a password key");
+ok(listOk.connections.every((c) => "ssl_mode_configured" in c && "ssl_negotiated" in c),
+  "C1 every listing row separates configured from negotiated TLS");
+ok(Array.isArray(listOk.field_guide) && listOk.field_guide.length >= 4, "C1 the listing explains its own fields for a non-engineer reader");
+
+setProbeConnection(async (entry) =>
+  entry.name === "kb"
+    ? { ok: false, error: 'FATAL: database "factory_commons" does not exist', ssl: { configured: entry.sslMode } }
+    : { ok: true, info: { database: entry.database, user: entry.user }, ssl: { configured: entry.sslMode, negotiated: "plaintext", encrypted: false } }
+);
+const listMixed = parseResp(await handleToolCall(fakeConnMgr(), "omatic_list_connections", {}));
+ok(listMixed.outcome === "degraded", "C1 an unreachable connection degrades the listing");
+ok(listMixed.results_trustworthy === false, "C1 a degraded listing is not clean");
+ok(listMixed.reachable_count === 1 && listMixed.unreachable_count === 1, "C1 the listing counts both sides");
+ok(
+  listMixed.degraded_reasons.some((r) => /connection:kb/.test(r) && /does not exist/.test(r)),
+  "C1 the degraded reason names the connection and carries the real Postgres error"
+);
+ok(
+  listMixed.connections.find((c) => c.name === "kb").probe_error === 'FATAL: database "factory_commons" does not exist',
+  "C1 the unreachable row carries the unparaphrased error"
+);
+ok(listMixed.connections.find((c) => c.name === "omatic").reachable === true, "C1 one bad connection does not taint the others");
+
+// ── C3: the test handler ──
+setProbeConnection(async () => ({
+  ok: false,
+  error: 'FATAL: password authentication failed for user "o-matic-llm"',
+  ssl: { configured: "disable", negotiated: null, encrypted: null },
+}));
+const beforeTest = fsMod.readFileSync(factoryFile, "utf8");
+const testFail = await handleToolCall(fakeConnMgr(), "omatic_test_connection", {
+  host: "cabinet.blue-triggerfish.ts.net",
+  database: "o-matic",
+  user: "o-matic-llm",
+  password: "wrong",
+  ssl_mode: "disable",
+});
+const testFailBody = parseResp(testFail);
+ok(testFail.isError === true, "C3 a failed test is reported as a failure, not a clean envelope");
+ok(testFailBody.reachable === false, "C3 a failed test reports reachable:false");
+ok(
+  testFailBody.postgres_error === 'FATAL: password authentication failed for user "o-matic-llm"',
+  "C3 a failed test returns the real Postgres error"
+);
+ok(testFailBody.mutated_config === false, "C3 a failed test states that it changed nothing");
+ok(testFailBody.target.password_configured === true, "C3 the test reports that a password was supplied");
+ok(!JSON.stringify(testFailBody).includes("wrong"), "C3 the test never echoes the password it was given");
+ok(fsMod.readFileSync(factoryFile, "utf8") === beforeTest, "C3 a failed test left factory.json byte-identical");
+
+setProbeConnection(async (entry) => ({
+  ok: true,
+  info: { database: entry.database, user: entry.user },
+  ssl: { configured: entry.sslMode, negotiated: "plaintext", encrypted: false, fell_back: false },
+}));
+const testOkBody = parseResp(
+  await handleToolCall(fakeConnMgr(), "omatic_test_connection", {
+    host: "cabinet.blue-triggerfish.ts.net",
+    database: "o-matic",
+    user: "o-matic-llm",
+    password: SECRET,
+    sslmode: "disable",
+  })
+);
+ok(testOkBody.success === true && testOkBody.reachable === true, "C3 a successful test reports reachable:true");
+ok(testOkBody.connected_database === "o-matic", "C3 a successful test reports the database it landed on");
+ok(testOkBody.target.ssl_mode_configured === "disable", "C3 the libpq sslmode spelling reaches the probe");
+ok(testOkBody.mutated_config === false, "C3 a successful test still changes nothing");
+ok(fsMod.readFileSync(factoryFile, "utf8") === beforeTest, "C3 a successful test left factory.json byte-identical");
+ok(/omatic_add_connection/.test(testOkBody.note), "C3 a successful test tells the operator how to keep the settings");
+ok(!JSON.stringify(testOkBody).includes(SECRET), "C3 a successful test never echoes the password");
+
+resetProbeConnection();
+// tmpRoot is not removed here — the C6 block below reuses the same factory
+// file. Cleanup happens once, at the end of C6.
+
+// ── C4: discoverability ──
+const cSurface = buildToolList(fakeConnections());
+const cNames = cSurface.map((t) => t.name);
+const CONNECTION_TOOLS = [
+  "omatic_list_connections",
+  "omatic_test_connection",
+  "omatic_add_connection",
+  "omatic_edit_connection",
+  "omatic_remove_connection",
+  "omatic_set_active_connection",
+];
+for (const name of CONNECTION_TOOLS) {
+  ok(cNames.includes(name), `C4 ${name} is published in the tool surface`);
+  ok(Buffer.byteLength(name, "utf8") <= 64, `C4 ${name} fits the 64-byte Codex tool-name budget`);
+  const def = cSurface.find((t) => t.name === name);
+  ok(def && typeof def.description === "string" && def.description.length > 80,
+    `C4 ${name} has a description substantial enough to choose it by`);
+}
+ok(new Set(cNames).size === cNames.length, "C4 every published tool name is unique");
+
+const listDef = cSurface.find((t) => t.name === "omatic_list_connections");
+ok(/reachab/i.test(listDef.description), "C4 the listing description advertises live reachability");
+ok(/negotiat/i.test(listDef.description), "C4 the listing description advertises negotiated TLS");
+ok(/password is never returned/i.test(listDef.description), "C4 the listing description states passwords are never returned");
+const testDef = cSurface.find((t) => t.name === "omatic_test_connection");
+ok(/nothing is saved/i.test(testDef.description), "C4 the test description states nothing is saved");
+ok(testDef.inputSchema.properties.host && testDef.inputSchema.properties.password,
+  "C4 the test tool takes a host and a password — the operator's original ask");
+ok(testDef.inputSchema.properties.sslmode && testDef.inputSchema.properties.ssl_mode,
+  "C4 the test tool accepts both ssl_mode spellings");
+const editDef = cSurface.find((t) => t.name === "omatic_edit_connection");
+ok(/test-connected before anything is written/i.test(editDef.description),
+  "C4 the edit description states it tests before writing");
+const addDef = cSurface.find((t) => t.name === "omatic_add_connection");
+ok(/writes nothing|nothing written|aborts without touching/i.test(addDef.description),
+  "C4 the add description states a failed probe writes nothing");
+
+const cInstructions = buildServerInstructions();
+ok(/omatic_list_connections/.test(cInstructions), "C4 the server instructions name the listing tool");
+ok(/omatic_test_connection/.test(cInstructions), "C4 the server instructions name the test tool");
+ok(/omatic_edit_connection/.test(cInstructions), "C4 the server instructions name the edit tool");
+
+const guideBody = parseResp(await handleToolCall(fakeConnMgr(), "omatic_usage_guide", { include_connections: false }));
+ok(typeof guideBody.connection_management === "object", "C4 the usage guide carries a connection_management section");
+for (const name of CONNECTION_TOOLS) {
+  ok(JSON.stringify(guideBody).includes(name), `C4 the usage guide names ${name}`);
+}
+ok(
+  /configured/i.test(guideBody.connection_management.configured_vs_actual) &&
+    /negotiat/i.test(guideBody.connection_management.configured_vs_actual),
+  "C4 the usage guide explains configured vs negotiated TLS"
+);
+ok(/survive a respawn/i.test(guideBody.connection_management.persistence), "C4 the usage guide states changes persist");
+ok(guideBody.version === require(resolve(here, "../server/package.json")).version,
+  "C4 the usage guide reports the real plugin version rather than a stale literal");
+
+// The B4 resolution error is where an operator with no factory ends up, so it
+// is where the connection surface has to be named.
+const unresolvedText = connectionsMod.unresolvedFactoryError({
+  OMATIC_STATE_DIR: pathMod.join(osMod.tmpdir(), "omatic-section-c-nonexistent"),
+}).message;
+for (const name of ["omatic_list_connections", "omatic_test_connection", "omatic_add_connection", "omatic_edit_connection", "omatic_remove_connection"]) {
+  ok(unresolvedText.includes(name), `C4 the unresolved-factory error names ${name}`);
+}
+ok(/omatic_select_factory/.test(unresolvedText), "C4 the unresolved-factory error still leads with select_factory");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C6 — per-connection permissions
+//
+// benecard is a client database and dbadmin connects as a superuser. Before
+// this, the only thing stopping a tool writing to either was the model choosing
+// not to: a rule loaded, not a rule obeyed (#321). These assertions exist
+// because "the model will behave" is not a control.
+//
+// The bypass attempts matter as much as the happy path. J1 deleted the
+// switchable guardDestructive and the ten execute_sql aliases that hard-coded
+// it off; nothing here may reintroduce that shape.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const {
+  TOOL_ACCESS,
+  toolAccessKind,
+  sqlIsReadOnly,
+  stripSqlNoise,
+  checkConnectionPermission,
+  normalizePermissionArg,
+  permissionForConnection,
+  PERMISSION_MEANS,
+} = __test__;
+
+// ── Statement classification ──
+const READS = [
+  "SELECT 1",
+  "select * from tasks where id = 3",
+  "  \n SELECT now()",
+  "WITH t AS (SELECT 1) SELECT * FROM t",
+  "EXPLAIN SELECT * FROM tasks",
+  "SHOW server_version",
+  "TABLE tasks",
+  "VALUES (1),(2)",
+  "SELECT * FROM tasks; SELECT * FROM sessions",
+  "SELECT 'delete from tasks' AS harmless_text",
+  "SELECT 1 -- delete from tasks",
+  "SELECT 1 /* update tasks set x=1 */",
+];
+for (const sql of READS) ok(sqlIsReadOnly(sql) === true, `C6 classified as a read: ${sql.trim().slice(0, 48)}`);
+
+const WRITES = [
+  "INSERT INTO tasks (title) VALUES ('x')",
+  "insert into tasks (title) values ('x')",
+  "UPDATE tasks SET title = 'x'",
+  "DELETE FROM tasks",
+  "TRUNCATE tasks",
+  "DROP TABLE tasks",
+  "ALTER TABLE tasks ADD COLUMN c int",
+  "CREATE TABLE t (id int)",
+  "GRANT ALL ON tasks TO public",
+  "REVOKE ALL ON tasks FROM public",
+  "REFRESH MATERIALIZED VIEW mv",
+  "VACUUM tasks",
+  "REINDEX TABLE tasks",
+  "COPY tasks FROM '/tmp/x'",
+  "CALL do_something()",
+  "DO $$ BEGIN PERFORM 1; END $$",
+  "MERGE INTO tasks USING src ON true WHEN MATCHED THEN DELETE",
+  // The CTE case: leads with WITH, writes anyway. A leading-keyword check alone
+  // would wave this through.
+  "WITH gone AS (DELETE FROM tasks RETURNING *) SELECT * FROM gone",
+  "WITH added AS (INSERT INTO tasks (title) VALUES ('x') RETURNING *) SELECT * FROM added",
+  // A read followed by a write in one batch is a write.
+  "SELECT 1; DELETE FROM tasks",
+  "SELECT * INTO new_table FROM tasks",
+  "SELECT * FROM tasks FOR UPDATE",
+  "SELECT * FROM tasks FOR NO KEY UPDATE",
+  "SET session_replication_role = replica",
+  "LOCK TABLE tasks",
+  "BEGIN",
+  "",
+  "   ",
+];
+for (const sql of WRITES) ok(sqlIsReadOnly(sql) === false, `C6 classified as a write: ${sql.trim().slice(0, 48) || "(empty)"}`);
+
+ok(!/delete/i.test(stripSqlNoise("SELECT 'delete' AS x")), "C6 string literals are stripped before classification");
+ok(!/update/i.test(stripSqlNoise("SELECT 1 -- update tasks")), "C6 line comments are stripped before classification");
+ok(!/drop/i.test(stripSqlNoise("SELECT 1 /* drop table t */")), "C6 block comments are stripped before classification");
+
+// ── Tool classification ──
+ok(toolAccessKind("omatic_search_memory", {}) === "read", "C6 a memory search is a read");
+ok(toolAccessKind("omatic_list_tasks", {}) === "read", "C6 listing tasks is a read");
+ok(toolAccessKind("omatic_record_decision", {}) === "write", "C6 recording a decision is a write");
+ok(toolAccessKind("omatic_claim_work", {}) === "write", "C6 claiming work is a write");
+ok(toolAccessKind("omatic_factory_startup_run", {}) === "write", "C6 startup_run is a write — it seeds and records");
+ok(toolAccessKind("omatic_list_connections", {}) === "meta", "C6 the connection surface is meta, not a DB access");
+ok(toolAccessKind("omatic_execute_sql", { sql: "SELECT 1" }) === "read", "C6 execute_sql is classified per statement");
+ok(toolAccessKind("omatic_execute_sql", { sql: "DELETE FROM t" }) === "write", "C6 a DELETE through execute_sql is a write");
+ok(
+  toolAccessKind("omatic_some_tool_added_next_year", {}) === "write",
+  "C6 an unclassified tool defaults to write — the guard fails closed"
+);
+// confirm_destructive is the operator approving a destructive statement. It is
+// not, and must never become, a permission override.
+ok(
+  toolAccessKind("omatic_execute_sql", { sql: "DELETE FROM t", confirm_destructive: true }) === "write",
+  "C6 confirm_destructive does not reclassify a write as a read"
+);
+
+// ── The refusal decision ──
+ok(checkConnectionPermission("read_write", "write", "omatic", "t") === null, "C6 read_write permits a write");
+ok(checkConnectionPermission("read_write", "read", "omatic", "t") === null, "C6 read_write permits a read");
+ok(checkConnectionPermission("read_only", "read", "benecard", "t") === null, "C6 read_only permits a read");
+ok(checkConnectionPermission("read_only", "write", "benecard", "t") !== null, "C6 read_only refuses a write");
+ok(checkConnectionPermission("disabled", "read", "benecard", "t") !== null, "C6 disabled refuses even a read");
+ok(checkConnectionPermission("disabled", "write", "benecard", "t") !== null, "C6 disabled refuses a write");
+ok(checkConnectionPermission("disabled", "meta", "benecard", "t") === null, "C6 the connection surface stays usable on a disabled connection");
+ok(checkConnectionPermission("read_only", "meta", "benecard", "t") === null, "C6 the connection surface stays usable on a read_only connection");
+
+const roRefusal = checkConnectionPermission("read_only", "write", "benecard", "omatic_record_decision");
+ok(/benecard/.test(roRefusal.message), "C6 the refusal names the connection");
+ok(/read_only/.test(roRefusal.message), "C6 the refusal names the mode");
+ok(/omatic_record_decision/.test(roRefusal.message), "C6 the refusal names the tool that was stopped");
+ok(/never reached the database/.test(roRefusal.message), "C6 the refusal states the database was never reached");
+ok(/omatic_edit_connection/.test(roRefusal.message), "C6 the refusal says how to change the mode");
+ok(roRefusal.detail.reached_database === false, "C6 the refusal detail records that nothing reached the database");
+ok(roRefusal.detail.refused_by === "connection_permission", "C6 the refusal detail names the guard that fired");
+
+// ── Argument normalization ──
+ok(normalizePermissionArg({}, "read_write") === "read_write", "C6 an absent permission keeps the current mode");
+ok(normalizePermissionArg({ permission: "read-only" }, "read_write") === "read_only", "C6 a hyphenated mode is accepted");
+ok(normalizePermissionArg({ permission: "READ_ONLY" }, "read_write") === "read_only", "C6 mode matching is case-insensitive");
+throwsWith(() => normalizePermissionArg({ permission: "readonly" }, "read_write"), "C6 an unknown mode is rejected");
+throwsWith(() => normalizePermissionArg({ permission: "admin" }, "read_write"), "C6 an invented mode is rejected");
+ok(
+  connectionsMod.normalizeFactoryConnections({ connections: [{ ...storedConn }] }, "omatic")[0].permission ===
+    "read_write",
+  "C6 a factory.json entry with no permission defaults to read_write (existing files are unaffected)"
+);
+ok(
+  connectionsMod.normalizeFactoryConnections(
+    { connections: [{ ...storedConn, permission: "read_only" }] },
+    "omatic"
+  )[0].permission === "read_only",
+  "C6 a stored permission is read back off disk"
+);
+throwsWith(
+  () => connectionsMod.normalizeFactoryConnections({ connections: [{ ...storedConn, permission: "god" }] }, "omatic"),
+  "C6 an invalid permission in factory.json is rejected at load"
+);
+ok(
+  connectionsMod.VALID_PERMISSIONS.size === 3 && connectionsMod.DEFAULT_PERMISSION === "read_write",
+  "C6 there are exactly three modes and the default is read_write"
+);
+
+// ── Second layer: the pool itself ──
+const roPoolOpts = connectionsMod.poolOptionsFor({ ...cfgFixture, permission: "read_only" }, false, {});
+ok(
+  roPoolOpts.options === "-c default_transaction_read_only=on",
+  "C6 a read_only connection's pool runs with default_transaction_read_only=on"
+);
+ok(
+  connectionsMod.poolOptionsFor({ ...cfgFixture, permission: "read_write" }, false, {}).options === undefined,
+  "C6 a read_write connection's pool carries no read-only session option"
+);
+
+// ── The chokepoint, end to end ──
+const permMgr = (permission) => {
+  const env = fakeEnvFactory(factoryFile);
+  return {
+    env: () => env,
+    project: () => ({ factory_id: "omatic", platform_profile: "claude-code", resolution: {} }),
+    names: () => ["omatic", "benecard"],
+    defaultName: () => "omatic",
+    activeName: "omatic",
+    has: (n) => ["omatic", "benecard"].includes(n),
+    getConfig: (n) => ({ ...cfgFixture, name: n, permission: n === "benecard" ? permission : "read_write" }),
+    permissionOf: (n) => (n === "benecard" ? permission : "read_write"),
+    reload: async () => ({ ok: true }),
+    // If the guard ever lets a call through, this is what it would reach. Any
+    // assertion below that expects a refusal would instead see this throw,
+    // which is the failure we want to be loud.
+    execute: async () => {
+      throw new Error("GUARD LEAKED: a refused call reached the database layer");
+    },
+    query: async () => {
+      throw new Error("GUARD LEAKED: a refused call reached the database layer");
+    },
+  };
+};
+
+const refusedBody = async (permission, tool, args) =>
+  parseResp(await handleToolCall(permMgr(permission), tool, args));
+
+// read_only: writes refused, reads permitted through to the DB layer.
+const roWrite = await handleToolCall(permMgr("read_only"), "omatic_execute_sql:benecard", {
+  sql: "INSERT INTO members (name) VALUES ('x')",
+});
+const roWriteBody = parseResp(roWrite);
+ok(roWrite.isError === true, "C6 an INSERT on a read_only connection sets isError");
+ok(roWriteBody.outcome === "failed", "C6 a refused write reports outcome=failed");
+ok(roWriteBody.refused === true, "C6 a refused write is marked refused");
+ok(roWriteBody.reached_database === false, "C6 a refused write never reached the database");
+ok(roWriteBody.connection === "benecard" && roWriteBody.permission === "read_only",
+  "C6 the refusal payload names the connection and its mode");
+ok(/read_only/.test(roWriteBody.error), "C6 the refusal message states the mode");
+
+const roRead = parseResp(
+  await handleToolCall(permMgr("read_only"), "omatic_execute_sql:benecard", { sql: "SELECT count(*) FROM members" })
+);
+ok(/GUARD LEAKED/.test(JSON.stringify(roRead)) === false || roRead.refused !== true,
+  "C6 a SELECT on a read_only connection is not refused by the permission guard");
+ok(roRead.refused === undefined, "C6 a SELECT on a read_only connection passes the guard");
+
+// Every write tool, not just SQL. Most of these have no pinned variant (B8
+// publishes pinned names only for the three read families), so they are driven
+// through the unsuffixed path with the guarded connection as the session
+// default — which is exactly how an operator reaches them.
+const activePermMgr = (permission) => {
+  const m = permMgr(permission);
+  m.defaultName = () => "benecard";
+  return m;
+};
+const activeBody = async (permission, tool, args = {}) =>
+  parseResp(await handleToolCall(activePermMgr(permission), tool, args));
+
+for (const tool of [
+  "omatic_record_decision",
+  "omatic_record_session_event",
+  "omatic_record_probe_result",
+  "omatic_claim_work",
+  "omatic_release_work",
+  "omatic_factory_startup_run",
+]) {
+  const body = await activeBody("read_only", tool);
+  ok(body.refused === true, `C6 ${tool} is refused on a read_only connection`);
+  ok(body.reached_database === false, `C6 ${tool} never reached the database`);
+  ok(body.connection === "benecard", `C6 the ${tool} refusal names the connection`);
+}
+
+// Read tools stay available on read_only.
+for (const tool of ["omatic_search_memory", "omatic_list_tasks", "omatic_embedding_status", "omatic_factory_health_check"]) {
+  const body = await activeBody("read_only", tool);
+  ok(body.refused === undefined, `C6 ${tool} is permitted on a read_only connection`);
+}
+
+// disabled: nothing DB-touching, reads included.
+for (const tool of [
+  "omatic_execute_sql",
+  "omatic_search_memory",
+  "omatic_list_tasks",
+  "omatic_embedding_status",
+  "omatic_record_decision",
+  "omatic_factory_startup",
+]) {
+  const body = await activeBody("disabled", tool, { sql: "SELECT 1" });
+  ok(body.refused === true, `C6 ${tool} is refused on a disabled connection`);
+  ok(/disabled/.test(body.error), `C6 the ${tool} refusal states the connection is disabled`);
+}
+
+// ...but the connection surface still works on a disabled connection, or the
+// operator has no way to un-park it.
+const disabledList = parseResp(await handleToolCall(permMgr("disabled"), "omatic_list_connections", { probe: false }));
+ok(disabledList.refused === undefined, "C6 a disabled connection can still be listed");
+ok(
+  parseResp(await handleToolCall(permMgr("disabled"), "omatic_usage_guide", { include_connections: false })).refused ===
+    undefined,
+  "C6 the usage guide is reachable regardless of permission"
+);
+
+// read_write is unchanged — the default must not alter existing behaviour.
+for (const tool of ["omatic_execute_sql", "omatic_record_decision", "omatic_claim_work"]) {
+  const body = await refusedBody("read_write", `${tool}:benecard`, { sql: "DELETE FROM t" });
+  ok(body.refused === undefined, `C6 ${tool} is permitted on a read_write connection`);
+}
+
+// ── Bypass attempts ──
+// The guard runs before the switch, so the pinned variant and the unsuffixed
+// tool reach it identically; and no argument reaches the decision at all.
+const bypassAttempts = [
+  ["confirm_destructive", { sql: "DELETE FROM members", confirm_destructive: true }],
+  ["uppercase SQL", { sql: "delete FROM members" }],
+  ["leading whitespace and comments", { sql: "  /* just a read, honest */ DELETE FROM members" }],
+  ["a write hidden behind a read in a batch", { sql: "SELECT 1; DELETE FROM members" }],
+  ["a write hidden in a CTE", { sql: "WITH g AS (DELETE FROM members RETURNING *) SELECT * FROM g" }],
+  ["SELECT INTO", { sql: "SELECT * INTO copy_of_members FROM members" }],
+  ["SELECT FOR UPDATE", { sql: "SELECT * FROM members FOR UPDATE" }],
+];
+for (const [label, args] of bypassAttempts) {
+  const body = await refusedBody("read_only", "omatic_execute_sql:benecard", args);
+  ok(body.refused === true, `C6 bypass refused on read_only — ${label}`);
+  ok(body.reached_database === false, `C6 bypass never reached the database — ${label}`);
+}
+
+// The removed raw aliases must not have come back as an unguarded path.
+const permSurfaceNames = buildToolList(fakeConnections()).map((t) => t.name);
+ok(
+  !permSurfaceNames.some((n) => /^o-matic-server-|^postgres-cabinet-/.test(n)),
+  "C6 the removed raw execute_sql aliases have not returned as a permission bypass"
+);
+// Every published tool that can reach a database must be classified. An
+// unclassified tool defaults to write, so this is a discoverability check
+// rather than a safety hole — but an unintentional write classification on a
+// read tool is its own bug.
+for (const name of permSurfaceNames) {
+  const base = name.includes(":") ? name.slice(0, name.indexOf(":")) : name;
+  ok(TOOL_ACCESS.has(base), `C6 ${base} has an explicit access classification`);
+}
+
+// Pinned and unsuffixed reach the same verdict.
+const pinnedRefusal = await refusedBody("read_only", "omatic_execute_sql:benecard", { sql: "DELETE FROM t" });
+const activeMgr = permMgr("read_only");
+activeMgr.defaultName = () => "benecard";
+const unsuffixedRefusal = parseResp(await handleToolCall(activeMgr, "omatic_execute_sql", { sql: "DELETE FROM t" }));
+ok(pinnedRefusal.refused === true && unsuffixedRefusal.refused === true,
+  "C6 the pinned variant and the unsuffixed tool are guarded identically");
+ok(unsuffixedRefusal.connection === "benecard", "C6 the unsuffixed path resolves the active connection before guarding");
+
+// A disabled connection may not be made the session default.
+const setActiveDisabled = parseResp(
+  await handleToolCall(permMgr("disabled"), "omatic_set_active_connection", { name: "benecard" })
+);
+ok(setActiveDisabled.refused === true, "C6 a disabled connection cannot be made the session default");
+ok(/omatic_edit_connection/.test(setActiveDisabled.error), "C6 that refusal says how to re-enable it");
+ok(
+  parseResp(await handleToolCall(permMgr("read_only"), "omatic_set_active_connection", { name: "benecard" })).refused ===
+    undefined,
+  "C6 a read_only connection can still be made the session default"
+);
+
+// ── Round trip through the file, which is the operator's actual workflow ──
+setProbeConnection(async (entry) => ({
+  ok: true,
+  info: { database: entry.database, user: entry.user },
+  ssl: { configured: entry.sslMode, negotiated: "plaintext", encrypted: false },
+}));
+writeFactory([storedConn, { ...storedConn, name: "benecard", database: "benecard" }]);
+
+const toReadOnly = parseResp(
+  await handleToolCall(fakeConnMgr(), "omatic_edit_connection", { name: "benecard", permission: "read_only" })
+);
+ok(toReadOnly.success === true, "C6 a connection can be set to read_only through the edit tool");
+ok(toReadOnly.changed_fields.includes("permission"), "C6 the permission change is reported as a changed field");
+ok(
+  readFactory().connections.find((c) => c.name === "benecard").permission === "read_only",
+  "C6 the permission is persisted to factory.json"
+);
+ok(
+  connectionsMod.normalizeFactoryConnections(readFactory(), "omatic").find((c) => c.name === "benecard").permission ===
+    "read_only",
+  "C5/C6 a fresh load sees the permission — it survives a respawn"
+);
+
+const permListing = parseResp(await handleToolCall(fakeConnMgr(), "omatic_list_connections", { probe: false }));
+const benecardRow = permListing.connections.find((c) => c.name === "benecard");
+ok(benecardRow.permission === "read_only", "C6 the listing shows the permission as a first-class field");
+ok(typeof benecardRow.permission_means === "string", "C6 the listing explains what the mode means in plain English");
+ok(
+  Array.isArray(permListing.permissions) && permListing.permissions.some((p) => p.connection === "benecard"),
+  "C6 the listing carries a per-connection permission summary"
+);
+
+// Parking a connection is never blocked by a failing probe — that is the case
+// the mode exists for.
+setProbeConnection(async () => ({ ok: false, error: "FATAL: the host is gone" }));
+const parkIt = parseResp(
+  await handleToolCall(fakeConnMgr(), "omatic_edit_connection", { name: "benecard", permission: "disabled" })
+);
+ok(parkIt.success === true, "C6 a broken connection can still be parked as disabled");
+ok(parkIt.tested === false, "C6 parking a connection does not probe it");
+ok(
+  readFactory().connections.find((c) => c.name === "benecard").permission === "disabled",
+  "C6 the disabled mode is persisted"
+);
+const parkedListing = parseResp(await handleToolCall(fakeConnMgr(), "omatic_list_connections", {}));
+const parkedRow = parkedListing.connections.find((c) => c.name === "benecard");
+ok(parkedRow.reachability_checked === false, "C6 a disabled connection is listed but never connected to");
+ok(parkedRow.permission === "disabled", "C6 a parked connection is still visible in the listing");
+
+// And back again.
+setProbeConnection(async (entry) => ({
+  ok: true,
+  info: { database: entry.database, user: entry.user },
+  ssl: { configured: entry.sslMode, negotiated: "plaintext", encrypted: false },
+}));
+const restore = parseResp(
+  await handleToolCall(fakeConnMgr(), "omatic_edit_connection", { name: "benecard", permission: "read_write" })
+);
+ok(restore.success === true && restore.tested === true, "C6 re-enabling a connection re-tests it");
+ok(
+  readFactory().connections.find((c) => c.name === "benecard").permission === "read_write",
+  "C6 the connection is restored to read_write"
+);
+
+// Adding straight to read_only.
+const addRo = parseResp(
+  await handleToolCall(fakeConnMgr(), "omatic_add_connection", {
+    name: "client-db",
+    host: "h",
+    database: "d",
+    user: "u",
+    password: SECRET,
+    ssl_mode: "disable",
+    permission: "read_only",
+  })
+);
+ok(addRo.permission === "read_only", "C6 a connection can be added directly as read_only");
+ok(
+  readFactory().connections.find((c) => c.name === "client-db").permission === "read_only",
+  "C6 an added read_only connection is persisted with its mode"
+);
+ok(
+  parseResp(
+    await handleToolCall(fakeConnMgr(), "omatic_add_connection", {
+      name: "default-perm",
+      host: "h",
+      database: "d",
+      user: "u",
+      password: SECRET,
+      ssl_mode: "disable",
+    })
+  ).permission === "read_write",
+  "C6 an add that says nothing about permission defaults to read_write"
+);
+
+resetProbeConnection();
+fsMod.rmSync(tmpRoot, { recursive: true, force: true });
+
+// ── C6 discoverability ──
+ok(/permission/i.test(listDef.description), "C6 the listing description advertises the permission field");
+ok(/read_only/.test(editDef.description), "C6 the edit description advertises read_only");
+ok(/disabled/.test(editDef.description), "C6 the edit description advertises disabled");
+ok(
+  editDef.inputSchema.properties.permission &&
+    Array.isArray(editDef.inputSchema.properties.permission.enum) &&
+    editDef.inputSchema.properties.permission.enum.length === 3,
+  "C6 the edit tool takes permission as an enum of exactly the three modes"
+);
+ok(
+  addDef.inputSchema.properties.permission &&
+    addDef.inputSchema.properties.permission.default === "read_write",
+  "C6 the add tool defaults permission to read_write"
+);
+const sqlDef = cSurface.find((t) => t.name === "omatic_execute_sql");
+ok(/cannot be overridden/i.test(sqlDef.description), "C6 the SQL tool states the permission cannot be overridden");
+ok(/read_only/.test(sqlDef.description), "C6 the SQL tool description names the read_only behaviour");
+ok(/permission/i.test(cInstructions), "C6 the server instructions describe per-connection permissions");
+ok(/read_only/.test(cInstructions), "C6 the server instructions name the read_only mode");
+ok(
+  typeof guideBody.connection_management.control_access === "string" &&
+    /no argument, flag or alias that bypasses it/.test(guideBody.connection_management.control_access),
+  "C6 the usage guide states there is no bypass"
+);
+ok(
+  Array.isArray(guideBody.connection_management.permission_modes) &&
+    guideBody.connection_management.permission_modes.length === 3,
+  "C6 the usage guide documents all three modes"
+);
+ok(
+  guideBody.safety_rules.some((r) => /confirm_destructive does not override it/.test(r)),
+  "C6 the safety rules state confirm_destructive is not a permission override"
+);
+ok(Object.keys(PERMISSION_MEANS).length === 3, "C6 every mode has a plain-English gloss");
+ok(
+  permissionForConnection({ getConfig: () => ({ permission: "read_only" }) }, "x") === "read_only",
+  "C6 the permission resolver falls back to the stored config when permissionOf is absent"
+);
+
+// ── Section C documentation ──
+// The docs are part of the deliverable: C4 is discoverability, and a tool an
+// operator cannot find is a tool that does not exist for them.
+const cReadme = fsMod.readFileSync(resolve(here, "../README.md"), "utf8");
+for (const name of CONNECTION_TOOLS) {
+  ok(cReadme.includes(name), `C4 the README documents ${name}`);
+}
+ok(/## The connection surface/.test(cReadme), "C4 the README has a connection surface section");
+ok(/password is never returned/i.test(cReadme), "C4 the README states passwords are never returned");
+ok(/Configured and negotiated are separate fields/i.test(cReadme),
+  "C1 the README explains configured vs negotiated TLS");
+ok(/### Per-connection permissions/.test(cReadme), "C6 the README documents per-connection permissions");
+ok(/read_write/.test(cReadme) && /read_only/.test(cReadme) && /disabled/.test(cReadme),
+  "C6 the README names all three permission modes");
+ok(/no argument, flag or alias that bypasses it/i.test(cReadme), "C6 the README states there is no bypass");
+ok(/fails closed/i.test(cReadme), "C6 the README states the guard fails closed");
+ok(/default_transaction_read_only/.test(cReadme), "C6 the README documents the second enforcement layer");
+ok(/\*\*21 base tools\*\*/.test(cReadme), "C4 the README reports the current base tool count");
+ok(/total of \*\*36\*\*/.test(cReadme), "C4 the README reports the current total tool count");
+
+const cChangelog = fsMod.readFileSync(resolve(here, "../CHANGELOG.md"), "utf8");
+ok(/^## 3\.0\.1/m.test(cChangelog), "the CHANGELOG has a 3.0.1 entry");
+ok(/omatic_test_connection/.test(cChangelog), "the CHANGELOG records the new test tool");
+ok(/omatic_edit_connection/.test(cChangelog), "the CHANGELOG records the new edit tool");
+ok(/Per-connection permissions/i.test(cChangelog), "the CHANGELOG records per-connection permissions");
 
 if (failures.length) {
   console.error(`startup-modes smoke: ${pass} passed, ${failures.length} FAILED`);
