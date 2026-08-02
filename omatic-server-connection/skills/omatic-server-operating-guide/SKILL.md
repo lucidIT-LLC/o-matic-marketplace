@@ -1,11 +1,11 @@
 ---
-name: omatic-server-connection
+name: omatic-server-operating-guide
 description: Use when operating an O-Matic Server project through the Codex plugin, including factory startup, health checks, memory search, embedding status, task review, decision logging, connection setup, work claims, and guarded SQL.
 ---
 
-# O-Matic Server
+# O-Matic Server — Operating Guide
 
-<!-- version: 3.1.0 | sig: 2 | author: James Walker | package: O-Matic Server Connection -->
+<!-- version: 3.1.1 | sig: 2 | author: James Walker | package: O-Matic Server Connection -->
 
 This plugin is project-centric. Resolve the active factory from folder context before running factory work.
 
