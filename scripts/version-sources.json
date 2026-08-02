@@ -22,6 +22,18 @@
         },
         {
           "type": "json",
+          "path": "omatic-server-connection/.codex-plugin/plugin.json",
+          "field": "version",
+          "label": "codex plugin.json"
+        },
+        {
+          "type": "json",
+          "path": "omatic-server-connection/agent-pack.json",
+          "field": "version",
+          "label": "agent-pack.json"
+        },
+        {
+          "type": "json",
           "path": "omatic-server-connection/package.json",
           "field": "version",
           "label": "package.json"
@@ -31,6 +43,12 @@
           "path": "omatic-server-connection/server/package.json",
           "field": "version",
           "label": "server/package.json"
+        },
+        {
+          "type": "regex",
+          "path": "omatic-server-connection/skills/omatic-server-connection/SKILL.md",
+          "pattern": "<!--\\s*version:\\s*([^\\s|]+)",
+          "label": "operating-guide SKILL.md header"
         },
         {
           "type": "regex",

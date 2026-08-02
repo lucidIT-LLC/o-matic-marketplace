@@ -19,7 +19,7 @@ const {
   setNotifyToolsChanged,
 } = require("./tools.js");
 
-const PLUGIN_VERSION = "2.2.1";
+const PLUGIN_VERSION = "3.0.0";
 
 async function main() {
   // B1 — restore a previously persisted factory selection before anything reads
