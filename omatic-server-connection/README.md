@@ -280,11 +280,20 @@ Expect `factory_file` pointing at your project's `.omatic/factory.json` and `act
 
   ### Also in 3.0
 
-  - **Response layer (#4 A1–A3, A9):** every response carries an `outcome` of
-    `complete` | `degraded` | `failed` | `no_op`, plus `degraded_reasons`,
-    `no_op_reasons`, and `results_trustworthy`. A handler can no longer emit a
-    clean result once a constituent query has errored, and the envelope cannot
-    be spoofed by handler-supplied keys.
+  - **Response layer (#4 A1–A3, A9, F1):** every response carries an `outcome`
+    of `complete` | `degraded` | `failed` | `no_op`, plus `degraded_reasons`,
+    `no_op_reasons`, `results_trustworthy`, and `trust_level`. A handler can no
+    longer emit a clean result once a constituent query has errored, and the
+    envelope cannot be spoofed by handler-supplied keys.
+  - **`trust_level` (#4 F1):** `results_trustworthy` is a strict boolean meaning
+    "nothing about this response was degraded" — true only for `complete` and
+    `no_op`. It previously reported true for any degraded call that observed
+    rows, so rows returned by one query laundered another query's failure into
+    a clean envelope. The gradation a boolean cannot hold now lives beside it:
+    `trusted` (complete or no_op), `partial` (degraded, some rows came back —
+    read them, but read `degraded_reasons` first), `untrusted` (degraded with
+    zero rows, or failed — an empty answer from a broken call carries no
+    information).
   - **`no_op` (#4 A9):** zero-row mutations are no longer reported as
     `complete`. `omatic_release_work` releasing a claim you do not hold now
     returns `outcome: "no_op"` — previously indistinguishable from a real

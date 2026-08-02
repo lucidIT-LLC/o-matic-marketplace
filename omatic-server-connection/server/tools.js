@@ -171,7 +171,16 @@ const RESERVED_OUTCOME_KEYS = [
   "degraded_reasons",
   "no_op_reasons",
   "results_trustworthy",
+  "trust_level",
 ];
+
+// ── Trust levels (Factory 3.0 P4, F1) ──
+// `results_trustworthy` is a boolean and booleans cannot express amber. The
+// amendment needs three states, so the boolean now means exactly one thing —
+// "this response is clean" — and the gradation lives beside it.
+const TRUST_TRUSTED = "trusted";
+const TRUST_PARTIAL = "partial";
+const TRUST_UNTRUSTED = "untrusted";
 
 const outcomeStore = new AsyncLocalStorage();
 
@@ -284,6 +293,42 @@ class OutcomeCollector {
     if (!VALID_OUTCOMES.has(outcome)) {
       throw new Error(`Outcome invariant violated: unknown outcome "${outcome}".`);
     }
+    // ── F1 (Factory 3.0 P4) — a degraded response is never a clean one ──
+    //
+    // The previous rule was `outcome === complete ? true : rowsObserved > 0`,
+    // which let a degraded call report results_trustworthy:true whenever ANY
+    // constituent query returned rows. That is a request-level aggregate
+    // masking a per-query hole: query A returns 40 rows, query B — the one the
+    // caller asked about — errors, and the envelope still reads clean.
+    //
+    // Smith's amendment: a zero-result degraded response is an amber result,
+    // never a clean one. So `results_trustworthy` now means precisely "nothing
+    // was degraded" and is false for every non-complete outcome. The amber/red
+    // distinction the boolean cannot hold moves to `trust_level`:
+    //
+    //   complete              -> true  / trusted    (green)
+    //   no_op                 -> true  / trusted    (green — see below)
+    //   degraded, rows  > 0   -> false / partial    (amber — read what came back, but check the reasons)
+    //   degraded, rows == 0   -> false / untrusted  (amber-to-red — an empty answer from a degraded call carries no information)
+    //   failed                -> false / untrusted  (red)
+    //
+    // A9 x F1 (merge of P3 and P4): `no_op` joins `complete` on the clean side
+    // of both fields. F1's rule is "nothing was degraded", and a no-op degrades
+    // nothing — the statement ran, matched zero rows, and that zero IS the
+    // answer, measured rather than inferred. This is precisely the case F1's
+    // strictness must NOT sweep up: F1 removed the `rowsObserved > 0` escape
+    // hatch because rows from one query were laundering another's failure, not
+    // because a clean zero is untrustworthy. Note the two clauses cannot be
+    // collapsed into `rowsObserved > 0` again without reopening that hole —
+    // a no_op is trusted despite observing no rows, and a degraded call is
+    // untrusted regardless of how many it observed.
+    const trust_level =
+      outcome === OUTCOME_COMPLETE || outcome === OUTCOME_NO_OP
+        ? TRUST_TRUSTED
+        : outcome === OUTCOME_DEGRADED && this.rowsObserved > 0
+          ? TRUST_PARTIAL
+          : TRUST_UNTRUSTED;
+
     return {
       outcome,
       degraded_reasons,
@@ -292,8 +337,14 @@ class OutcomeCollector {
       // produced by a missing relation must never read as a clean zero.
       // A no_op's zero IS the answer and was measured cleanly, so it is
       // trustworthy despite observing no rows.
-      results_trustworthy:
-        outcome === OUTCOME_COMPLETE || outcome === OUTCOME_NO_OP ? true : this.rowsObserved > 0,
+      //
+      // F1 (P4) tightened the false branch from `this.rowsObserved > 0` to a
+      // flat false: a degraded call is never clean no matter how many rows some
+      // other query in the same request happened to return. The boolean is now
+      // exactly `trust_level === TRUST_TRUSTED` — one meaning, no gradation —
+      // and the amber/red distinction lives in trust_level alone.
+      results_trustworthy: outcome === OUTCOME_COMPLETE || outcome === OUTCOME_NO_OP,
+      trust_level,
     };
   }
 }
@@ -336,6 +387,7 @@ function errorResponse(message, extra = {}) {
       degraded_reasons: reasons,
       no_op_reasons: collector.noOpReasons(),
       results_trustworthy: false,
+      trust_level: TRUST_UNTRUSTED,
       error: message,
       ...stripReservedOutcomeKeys(extra),
     },
@@ -348,7 +400,8 @@ function errorResponse(message, extra = {}) {
 // response is stamped degraded/failed — with isError:true on failed, using the
 // same jsonResponse channel errorResponse already uses.
 function successResponse(data = {}) {
-  const { outcome, degraded_reasons, no_op_reasons, results_trustworthy } = currentOutcome().summarize();
+  const { outcome, degraded_reasons, no_op_reasons, results_trustworthy, trust_level } =
+    currentOutcome().summarize();
   return jsonResponse(
     {
       // A no_op is not an error — the call did what was asked and the answer is
@@ -358,6 +411,7 @@ function successResponse(data = {}) {
       degraded_reasons,
       no_op_reasons,
       results_trustworthy,
+      trust_level,
       ...stripReservedOutcomeKeys(data),
     },
     outcome === OUTCOME_FAILED
@@ -373,11 +427,15 @@ function plural(value, singular, pluralForm = `${singular}s`) {
   return asNumber(value) === 1 ? singular : pluralForm;
 }
 
+// A5: v_mcp_readiness emits CRITICAL-DOWN, DEGRADED, REDUCED, BLOCKED and OK,
+// and probe_result emits 'untested'. Three of those fell through to "INFO",
+// which reads as benign — a critical connector that is down, or one that was
+// never probed, must not render with the same neutral icon as a note.
 function statusIcon(status) {
   const normalized = String(status || "").toLowerCase();
   if (["ok", "ready", "connected", "active"].includes(normalized)) return "OK";
-  if (["degraded", "warning", "warn"].includes(normalized)) return "WARN";
-  if (["unavailable", "blocked", "failed", "error"].includes(normalized)) return "FAIL";
+  if (["degraded", "warning", "warn", "reduced", "untested", "unknown"].includes(normalized)) return "WARN";
+  if (["unavailable", "blocked", "failed", "error", "critical-down"].includes(normalized)) return "FAIL";
   return "INFO";
 }
 
@@ -403,9 +461,29 @@ const UNKNOWN = "UNKNOWN";
 // formatters read through viewField(), which resolves ONLY the declared column.
 // A missing declared column renders UNKNOWN — the same contract A4 already
 // applies to unreadable sources — instead of quietly degrading to "?" or "0".
+// P4 A12 follow-through: every entry below was re-audited against the live
+// view definitions (information_schema.columns on the factory DB). Two declared
+// summary columns — `last_resume_notes` and `last_summary` — did not exist on
+// v_startup_summary at all. They were the exact `connector_name` defect one
+// layer up: the CONTRACT itself named phantom columns, so viewField dutifully
+// resolved them to null and the fast-wake view fell through to "no resume point
+// recorded" on every run, while the real answer sat in `resume_notes`.
+// Declaring a column that the view does not expose is the same class of bug as
+// reading one, and it is now caught by the smoke suite rather than by a human.
 const VIEW_COLUMNS = {
   // SELECT * FROM v_mcp_readiness / v_mcp_readiness_by_session
-  readiness: ["connector_id", "status_label", "probe_result"],
+  // probed_at + probe_result are what make A5 possible: they are the difference
+  // between "measured OK this session" and "inherited a verdict from a previous
+  // one". probe_note carries the demoted prior verdict written by
+  // fn_seed_session_mcp_status.
+  readiness: [
+    "connector_id",
+    "status_label",
+    "probe_result",
+    "probed_at",
+    "probe_note",
+    "criticality",
+  ],
   // SELECT * FROM v_embedding_health
   embedding: ["stale", "unembedded"],
   // SELECT * FROM v_startup_summary
@@ -416,8 +494,6 @@ const VIEW_COLUMNS = {
     "open_task_total",
     "open_tasks",
     "resume_notes",
-    "last_resume_notes",
-    "last_summary",
     "last_session_id",
     "platform",
   ],
@@ -426,6 +502,67 @@ const VIEW_COLUMNS = {
   // SELECT id, enforcement, rule FROM v_startup_rules
   rules: ["id", "enforcement", "rule"],
 };
+
+// ── A5: probe honesty helpers ──
+//
+// The DB half of A5 is done: fn_seed_session_mcp_status now writes
+// probe_result='untested' with probed_at NULL and demotes any prior verdict to
+// a note. The plugin must not undo that on the way out.
+//
+// A connector counts as MEASURED only when this session actually stamped it.
+// A row whose status_label says OK but whose probed_at is NULL is an inherited
+// verdict wearing a current label — the precise thing A5 forbids presenting as
+// current — so it is reported as unprobed no matter how green the label looks.
+const PROBE_UNTESTED = "untested";
+
+function probeIsMeasured(row) {
+  const probedAt = viewField("readiness", row, "probed_at", null);
+  const result = String(viewField("readiness", row, "probe_result", PROBE_UNTESTED)).toLowerCase();
+  return Boolean(probedAt) && result !== PROBE_UNTESTED;
+}
+
+// The only path to "this connector is OK". Both conditions are required:
+// a green label AND a measurement taken this session.
+function probeIsOk(row) {
+  return probeIsMeasured(row) && viewField("readiness", row, "status_label", null) === "OK";
+}
+
+// What to render for a connector, never folding `untested` into its label.
+function probeState(row) {
+  if (!probeIsMeasured(row)) return "UNTESTED";
+  return viewField("readiness", row, "status_label", null) || viewField("readiness", row, "probe_result", UNKNOWN);
+}
+
+// Session-scoped probe coverage. Returned in the startup packet so a consumer
+// reading JSON rather than the text view sees the same honesty.
+function probeCoverage(readinessRows, readinessOk) {
+  if (!readinessOk) {
+    return {
+      readable: false,
+      total: UNKNOWN,
+      measured_this_session: UNKNOWN,
+      untested: UNKNOWN,
+      untested_connectors: [],
+      note: "Connector readiness could not be read; probe coverage is unknown, not zero.",
+    };
+  }
+  const untested = readinessRows.filter((row) => !probeIsMeasured(row));
+  return {
+    readable: true,
+    total: readinessRows.length,
+    measured_this_session: readinessRows.length - untested.length,
+    untested: untested.length,
+    untested_connectors: untested.map((row) => ({
+      connector_id: viewField("readiness", row, "connector_id"),
+      criticality: viewField("readiness", row, "criticality", UNKNOWN),
+      // The demoted prior verdict, verbatim. Surfaced as history, never as status.
+      prior_verdict_note: viewField("readiness", row, "probe_note", null),
+    })),
+    note:
+      "measured_this_session counts connectors this session actually probed (probed_at IS NOT NULL). " +
+      "Seeded and inherited verdicts are reported as untested — a prior probe is history, not current status.",
+  };
+}
 
 // Read one declared column off a view row. `source` keys into VIEW_COLUMNS, so
 // a typo or an undeclared column throws at development time rather than
@@ -496,7 +633,9 @@ function formatStartupView(payload) {
 
   const openTaskTotal = summaryOk ? viewField("summary", summary, "open_task_total", "0") : UNKNOWN;
   const readyAgreements = agreements.filter((row) => viewField("agreements", row, "status_label", null) === "READY").length;
-  const connectorOk = readiness.filter((row) => viewField("readiness", row, "status_label", null) === "OK").length;
+  // A5: OK requires a measurement taken this session, not just a green label.
+  const connectorOk = readiness.filter(probeIsOk).length;
+  const connectorUntested = readiness.filter((row) => !probeIsMeasured(row)).length;
   const connectorTotal = readiness.length;
   const staleEmbedding = embeddingRows.reduce((total, row) => total + asNumber(viewField("embedding", row, "stale", 0)), 0);
   const unembedded = embeddingRows.reduce((total, row) => total + asNumber(viewField("embedding", row, "unembedded", 0)), 0);
@@ -515,13 +654,17 @@ function formatStartupView(payload) {
       ? `WARN ${combinedCurrent}/${combinedTarget} combined`
       : `OK ${combinedCurrent || UNKNOWN} combined`;
   const sopLabel = summaryOk ? `${sopIndex.length} active ${plural(sopIndex.length, "SOP")}` : `${UNKNOWN} active SOPs`;
+  // A5: GREEN requires every connector to have been MEASURED OK this session.
+  // An unprobed connector is not evidence of health, so it cannot be counted
+  // toward one.
   const factoryStatus = !readinessOk
     ? UNKNOWN
     : connectorOk === connectorTotal && connectorTotal > 0
       ? "GREEN"
       : "CHECK";
   const connectorLabel = readinessOk
-    ? `${connectorOk}/${connectorTotal} ${plural(connectorTotal, "connector")} OK`
+    ? `${connectorOk}/${connectorTotal} ${plural(connectorTotal, "connector")} measured OK` +
+      (connectorUntested ? ` | ${connectorUntested} never probed this session` : "")
     : `${UNKNOWN} connectors (readiness query failed)`;
   const skillLabel = agreementsOk
     ? `${readyAgreements}/${agreements.length} ${plural(agreements.length, "skill")} READY`
@@ -581,12 +724,30 @@ function formatStartupView(payload) {
       ? [`FAIL connector readiness ${UNKNOWN}: ${sourceError(startup.readiness)}`]
       : readiness.length
         ? readiness.map((row) => {
-            const label = viewField("readiness", row, "status_label", null);
-            const state = label || viewField("readiness", row, "probe_result", UNKNOWN);
-            return `${statusIcon(label)} ${viewField("readiness", row, "connector_id")}: ${state}`;
+            // A5: an unmeasured connector reports UNTESTED and carries its
+            // prior verdict as an explicit note, so the reader can see the
+            // difference between "we checked and it is down" and "we never
+            // checked and it used to be up".
+            const state = probeState(row);
+            const connector = viewField("readiness", row, "connector_id");
+            if (state === "UNTESTED") {
+              const prior = viewField("readiness", row, "probe_note", null);
+              return `WARN ${connector}: UNTESTED (not probed this session)${prior ? ` — ${prior}` : ""}`;
+            }
+            return `${statusIcon(state)} ${connector}: ${state}`;
           })
         : ["INFO no connector readiness rows returned"])
   );
+
+  // A5: state the measurement gap once, in words, above the per-connector list.
+  if (readinessOk && connectorUntested) {
+    lines.push(
+      "",
+      `Probe coverage: ${connectorOk}/${connectorTotal} measured this session. ` +
+        `${connectorUntested} ${plural(connectorUntested, "connector")} carry no current measurement — ` +
+        "their status is unknown, not OK. Run a real probe and record it with omatic_record_probe_result."
+    );
+  }
 
   if (p1Tasks.length) {
     lines.push("", "P1 Queue");
@@ -1242,14 +1403,41 @@ async function optionalQuery(connections, sql, params = [], explicitConnection =
   }
 }
 
-async function tableExists(connections, tableName, explicitConnection = null) {
+// A7, applied to the other schema-filtered probe in this file. This asked
+// `to_regclass('public.<table>')` while the statements it gates — the
+// work_claims INSERT and UPDATE — reference the table UNQUALIFIED. The two can
+// disagree: benecard's work_claims is `ops.work_claims` behind a public view,
+// and a factory that skipped the view would be told "not installed" about a
+// table its own DML would have found. Resolving unqualified asks the question
+// the caller actually means: "will my statement reach this relation?" — and the
+// schema it resolved through is returned so a false can be explained.
+async function resolveTable(connections, tableName, explicitConnection = null) {
+  // Shaped so it ALWAYS returns exactly one row. A join-based form yields zero
+  // rows when the relation is absent — which is precisely the case where the
+  // caller needs to be told which schemas were searched.
   const result = await optionalQuery(
     connections,
-    "SELECT to_regclass($1) AS relation",
-    [`public.${tableName}`],
+    // ::text[] is load-bearing. current_schemas() returns name[], for which
+    // node-postgres has no array parser, so the driver hands back the raw
+    // literal "{pg_catalog,public}" and Array.isArray() below is false — the
+    // search path would silently vanish from exactly the not-found report that
+    // exists to disclose it.
+    `SELECT to_regclass($1)::text AS relation,
+            current_schemas(true)::text[] AS search_path,
+            (SELECT n.nspname
+               FROM pg_class c
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE c.oid = to_regclass($1)) AS schema_name`,
+    [tableName],
     explicitConnection
   );
-  return Boolean(result.ok && result.rows[0] && result.rows[0].relation);
+  const row = result.ok && result.rows[0] ? result.rows[0] : null;
+  return {
+    exists: Boolean(row && row.relation),
+    schema: row ? row.schema_name : null,
+    searched_schemas: row && Array.isArray(row.search_path) ? row.search_path : [],
+    error: result.ok ? null : result.error,
+  };
 }
 
 async function handleResolveFactory(connections, _args, explicitConnection = null) {
@@ -1338,6 +1526,25 @@ async function handleStartup(connections, args, explicitConnection = null) {
     optionalQuery(connections, "SELECT * FROM public.v_agent_agreement ORDER BY agent_name", [], explicitConnection),
   ]);
 
+  // A5: an unprobed connector is a capability this tool advertises (connector
+  // readiness) that it could not actually exercise. recordUnavailable is the
+  // exact primitive for that, and it drops the response to outcome=degraded.
+  //
+  // This is deliberate and it will make routine startups read worse: with 20
+  // registered connectors and one the plugin can measure itself, most sessions
+  // start degraded until real probes are recorded. That is the honest state.
+  // A startup that reports `complete` while thirteen connectors carry no
+  // measurement is asserting something it did not check — the whole defect.
+  const coverage = probeCoverage(queryRows(readiness), sourceOk(readiness));
+  if (coverage.readable && coverage.untested > 0) {
+    currentOutcome().recordUnavailable(
+      "connector_probe_coverage",
+      `${coverage.untested} of ${coverage.total} connectors carry no measurement from this session ` +
+        `(${coverage.untested_connectors.map((c) => c.connector_id).join(", ")}). ` +
+        "Their status is unknown, not OK."
+    );
+  }
+
   const payload = {
     factory: redactFactory(connections.project()),
     pinned_connection: explicitConnection,
@@ -1348,16 +1555,27 @@ async function handleStartup(connections, args, explicitConnection = null) {
       readiness,
       embedding,
       agreements,
+      // A5: probe coverage travels in the packet, not only in the rendered
+      // text, so a consumer reading JSON gets the same answer a human reading
+      // the view does.
+      probe_coverage: coverage,
       loaded_skills: agreements.ok
         ? agreements.rows
             .filter((row) => viewField("agreements", row, "status_label", null) === "READY")
-            .map((row) => ({
-              agent_name: viewField("agreements", row, "agent_name", null),
-              agreement_version: viewField("agreements", row, "agreement_version", null),
-              factory_mode: row.agent_name && ["brandy", "carver", "data", "fred", "monet", "probot"].includes(row.agent_name)
-                ? "always_on_core_roster"
-                : "loaded_opt_in_lane",
-            }))
+            .map((row) => {
+              // A12: this read `row.agent_name` directly for the roster test
+              // while reading the same column through viewField two lines up —
+              // a contract that one call site opts out of is not a contract.
+              const agentName = viewField("agreements", row, "agent_name", null);
+              return {
+                agent_name: agentName,
+                agreement_version: viewField("agreements", row, "agreement_version", null),
+                factory_mode:
+                  agentName && ["brandy", "carver", "data", "fred", "monet", "probot"].includes(agentName)
+                    ? "always_on_core_roster"
+                    : "loaded_opt_in_lane",
+              };
+            })
         : [],
       skill_loading_contract:
         "All READY v_agent_agreement skills are startup-loaded. Core roster skills are always on for routing; opt-in critic/coach skills remain opt-in and do not self-activate.",
@@ -1446,7 +1664,31 @@ function formatFastStartupView(payload) {
   if (!readinessOk) {
     unknowns.push(`${UNKNOWN}: connector readiness unreadable — ${sourceError(startup.readiness)}`);
   } else {
+    // A5: "never probed" is its own category. It is not a measured failure, and
+    // it is emphatically not an OK. Fast-wake exists to answer "can I start
+    // work?", and an unmeasured connector is exactly the thing that question
+    // must not skip over — so untested items are UNKNOWNs, which suppress GREEN.
+    //
+    // Fast-wake is also meant to be terse, and a factory can register dozens of
+    // connectors it never probes. Critical ones are named individually; the
+    // rest collapse into one honest line rather than a wall of text nobody
+    // reads (a wall of text is its own way of hiding a signal).
+    const untested = readiness.filter((row) => !probeIsMeasured(row));
+    const untestedCritical = untested.filter(
+      (row) => viewField("readiness", row, "criticality", null) === "critical"
+    );
+    const untestedRest = untested.length - untestedCritical.length;
+    for (const row of untestedCritical) {
+      unknowns.push(`${UNKNOWN}: CRITICAL connector ${viewField("readiness", row, "connector_id")} not probed this session`);
+    }
+    if (untestedRest > 0) {
+      unknowns.push(
+        `${UNKNOWN}: ${untestedRest} non-critical ${plural(untestedRest, "connector")} not probed this session`
+      );
+    }
+
     for (const row of readiness) {
+      if (!probeIsMeasured(row)) continue;
       // A12: read the column v_mcp_readiness actually exposes. This was
       // `row.connector_name`, which the view has never had, so every degraded
       // connector rendered as "connector ?".
@@ -1473,11 +1715,15 @@ function formatFastStartupView(payload) {
     if (ruleTarget && ruleCount < ruleTarget) redYellow.push(`WARN: governance ${ruleCount}/${ruleTarget} rules`);
   }
 
+  // A12 follow-through: this read `last_resume_notes` then `last_summary`,
+  // neither of which v_startup_summary has ever exposed. Both resolved to null
+  // on every run, so the fast view has always printed "no resume point
+  // recorded" while the answer sat in `resume_notes` — the column the view
+  // does have, and the one the full view was already reading.
   const resume = !summaryOk
     ? session.resume_notes || `${UNKNOWN} — resume point unreadable`
     : session.resume_notes ||
-      viewField("summary", summary, "last_resume_notes", null) ||
-      viewField("summary", summary, "last_summary", null) ||
+      viewField("summary", summary, "resume_notes", null) ||
       "no resume point recorded";
   const openTasks = summaryOk ? viewField("summary", summary, "open_task_total", "0") : UNKNOWN;
 
@@ -1488,8 +1734,11 @@ function formatFastStartupView(payload) {
   if (items.length === 0) {
     lines.push("Status: GREEN — no red/yellow items.");
   } else if (unknowns.length) {
+    // A5 widened this bucket: an UNKNOWN is now either a source that could not
+    // be read (A17) or a connector that was never measured. Both deny GREEN,
+    // and the wording no longer claims all of them were read failures.
     lines.push(
-      `Status: ${UNKNOWN} — ${unknowns.length} health ${plural(unknowns.length, "source")} could not be read; ${items.length} item(s) need attention:`
+      `Status: ${UNKNOWN} — ${unknowns.length} ${plural(unknowns.length, "item")} unverified (unreadable source or unprobed connector); ${items.length} item(s) need attention:`
     );
     for (const item of items) lines.push(`  - ${item}`);
   } else {
@@ -1521,8 +1770,30 @@ function startupViewForMode(payload) {
 // `connected` requires BOTH observations. Reachability alone is not the claim —
 // the readiness seed is part of the path this probe asserts is working, so a
 // reachable database with a dead seed is honestly `degraded`, not green.
+//
+// ── A5 (P4) — and it names the connector it actually exercised ──
+//
+// The connector id used to be the literal "postgres-omatic" regardless of which
+// connection carried the I/O. Pinned to `kb`, this measured factory_commons and
+// then stamped postgres-omatic — a verdict about a connector the run never
+// touched, written with the full authority of a measurement. Same defect A6
+// closed for caller-asserted probes, committed by the plugin itself.
+//
+// `connection` is therefore part of the observation set, alongside the session
+// and seed results: all three describe what actually happened. Callers that
+// supply one get the `postgres-cabinet-{name}` form, which fn_record_probe_result
+// canonicalizes and REJECTS when absent from mcp_registry — the honest outcome
+// being "no probe recorded for this connection", never a probe recorded against
+// someone else's connector. handleStartupRun always supplies it; the bare
+// default remains only for callers with no connection to name (unit tests).
 function deriveBuiltInPostgresProbe(observed) {
-  const { sessionId = null, seedOk = false, seedValue = null, seedError = null } = observed || {};
+  const {
+    sessionId = null,
+    seedOk = false,
+    seedValue = null,
+    seedError = null,
+    connection = null,
+  } = observed || {};
   const sessionAnchored = sessionId !== undefined && sessionId !== null;
   const seedObserved = Boolean(seedOk) && seedValue !== null && seedValue !== undefined;
 
@@ -1536,9 +1807,11 @@ function deriveBuiltInPostgresProbe(observed) {
   ];
 
   return {
-    connector_name: "postgres-omatic",
+    connector_name: connection ? `postgres-cabinet-${connection}` : "postgres-omatic",
     status: sessionAnchored && seedObserved ? "connected" : "degraded",
-    note: `Startup runner: ${evidence.join("; ")}`,
+    note: connection
+      ? `Startup runner on connection "${connection}": ${evidence.join("; ")}`
+      : `Startup runner: ${evidence.join("; ")}`,
   };
 }
 
@@ -1621,6 +1894,16 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
   //
   // Status and note are derived by deriveBuiltInPostgresProbe from the two
   // operations actually executed above. A probe must report what happened.
+  //
+  // ── A5: and it names the connector it actually exercised ──
+  //
+  // The two halves of the same honesty rule, and they compose rather than
+  // compete: A15 fixes WHAT the probe claims, A5 fixes WHO it claims it about.
+  // A green status stamped on the wrong connector is no better than a green
+  // status stamped on no evidence, so the connection that carried the INSERT
+  // and seed above is passed in as a third observation. See
+  // deriveBuiltInPostgresProbe for why the id is derived rather than literal.
+  const probedConnection = explicitConnection || connections.defaultName();
   const probeResults = [];
   const measuredProbes = [
     deriveBuiltInPostgresProbe({
@@ -1628,10 +1911,13 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
       seedOk: seed.ok,
       seedValue: seededValue,
       seedError: seed.ok ? null : seed.error,
+      connection: probedConnection,
     }),
   ];
   for (const probe of measuredProbes) {
-    const result = await q(
+    // optionalQuery, not q: an unregistered connector must degrade this startup,
+    // not abort it, and must not silently fall back to stamping another id.
+    const result = await optionalQuery(
       connections,
       "SELECT fn_record_probe_result($1, $2, $3, $4) AS result",
       [probe.connector_name, sessionId, probe.status, probe.note || null],
@@ -1639,10 +1925,15 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     );
     probeResults.push({
       connector_name: probe.connector_name,
+      probed_connection: probedConnection,
       status: probe.status,
       source: "plugin_measured",
-      recorded: true,
-      result: result.rows[0] || null,
+      recorded: result.ok,
+      result: result.ok ? result.rows[0] || null : null,
+      error: result.ok
+        ? null
+        : `${result.error} — no probe was recorded for connection "${probedConnection}". ` +
+          "Register this connector in mcp_registry to have startup measure it.",
     });
   }
 
@@ -1901,12 +2192,89 @@ async function handleSearchMemory(connections, args, explicitConnection = null) 
   });
 }
 
+// ── A7: a schema-filtered probe must declare the schemas it searched ──
+//
+// omatic_embedding_status hardcoded `schemaname = 'public'`. Against the `kb`
+// connection — where semantic_index and document_chunks live in a `kb` schema
+// and carry two HNSW and two GIN indexes — it returned
+// `ok:true, count:0, hnsw_index_count:0, gin_index_count:0, warning:null`.
+// That is the worst available encoding of "I looked in the wrong place": it is
+// indistinguishable from a genuine, correctly-scoped finding of zero.
+//
+// The scope is now discovered rather than assumed. This locator runs UNFILTERED
+// by schema, so the answer to "where do the target tables live" comes from the
+// database instead of from a constant, and the schemas it found are returned to
+// the caller alongside every count derived from them.
+const EMBEDDING_TARGET_TABLES = ["semantic_index", "document_chunks"];
+const SYSTEM_SCHEMAS = ["pg_catalog", "information_schema", "pg_toast"];
+
+async function resolveEmbeddingScope(connections, explicitConnection) {
+  const located = await optionalQuery(
+    connections,
+    `SELECT n.nspname AS schema_name, c.relname AS table_name
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relname = ANY($1::text[])
+        AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+        AND n.nspname <> ALL($2::text[])
+        AND n.nspname NOT LIKE 'pg_temp%'
+      ORDER BY n.nspname, c.relname`,
+    [EMBEDDING_TARGET_TABLES, SYSTEM_SCHEMAS],
+    explicitConnection
+  );
+
+  if (!located.ok) {
+    return {
+      ok: false,
+      error: located.error,
+      searched_schemas: [],
+      located_tables: [],
+      missing_tables: EMBEDDING_TARGET_TABLES.slice(),
+    };
+  }
+
+  const rows = located.rows || [];
+  const searched = [...new Set(rows.map((r) => r.schema_name))].sort();
+  const found = [...new Set(rows.map((r) => r.table_name))];
+  return {
+    ok: true,
+    error: null,
+    searched_schemas: searched,
+    located_tables: rows.map((r) => ({ schema: r.schema_name, table: r.table_name })),
+    missing_tables: EMBEDDING_TARGET_TABLES.filter((t) => !found.includes(t)),
+  };
+}
+
 async function handleEmbeddingStatus(connections, _args, explicitConnection = null) {
   const verified = await verifyFactoryContext(connections, explicitConnection);
   if (!verified.ok) return errorResponse(verified.error, verified);
 
   const project = connections.project();
   const tenantId = project.factory_id;
+
+  // Resolve scope FIRST: every schema-filtered query below is parameterised on
+  // what this returns, so none of them can quietly search somewhere the target
+  // is not.
+  const scope = await resolveEmbeddingScope(connections, explicitConnection);
+  const searchedSchemas = scope.searched_schemas;
+
+  // A target outside the searched schemas is `degraded`, not zero. Both shapes
+  // of miss are recorded as unavailable capabilities, which the P0 outcome
+  // layer turns into outcome=degraded — so `ok:true, count:0` can no longer be
+  // the whole story.
+  if (!scope.ok) {
+    currentOutcome().recordUnavailable(
+      "embedding_schema_scope",
+      `could not locate ${EMBEDDING_TARGET_TABLES.join("/")} in any schema: ${scope.error}`
+    );
+  } else if (scope.missing_tables.length) {
+    currentOutcome().recordUnavailable(
+      "embedding_target_tables",
+      `${scope.missing_tables.join(", ")} not present in any non-system schema on this connection; ` +
+        `index and column counts below cover only ${searchedSchemas.join(", ") || "no schemas"}`
+    );
+  }
+
   const [
     config,
     extensions,
@@ -1935,43 +2303,49 @@ async function handleEmbeddingStatus(connections, _args, explicitConnection = nu
       explicitConnection
     ),
     optionalQuery(connections, "SELECT * FROM v_embedding_health", [], explicitConnection),
+    // A7: scoped to the schemas the locator actually found the tables in.
     optionalQuery(
       connections,
-      `SELECT tablename, indexname, indexdef
+      `SELECT schemaname, tablename, indexname, indexdef
        FROM pg_indexes
-       WHERE schemaname = 'public'
-         AND tablename IN ('semantic_index', 'document_chunks')
+       WHERE schemaname = ANY($1::text[])
+         AND tablename = ANY($2::text[])
          AND (
            indexdef ILIKE '%hnsw%'
            OR indexdef ILIKE '%ivfflat%'
            OR indexdef ILIKE '%gin%'
          )
-       ORDER BY tablename, indexname`,
-      [],
+       ORDER BY schemaname, tablename, indexname`,
+      [searchedSchemas, EMBEDDING_TARGET_TABLES],
       explicitConnection
     ),
+    // A7: the search functions were pinned to `public` for the same reason and
+    // with the same failure mode. Searched across every non-system schema, with
+    // the schema reported per row.
     optionalQuery(
       connections,
-      `SELECT p.proname,
+      `SELECT n.nspname AS schema_name,
+              p.proname,
               pg_get_function_identity_arguments(p.oid) AS args,
               pg_get_functiondef(p.oid) AS definition
        FROM pg_proc p
        JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname = 'public'
+       WHERE n.nspname <> ALL($1::text[])
+         AND n.nspname NOT LIKE 'pg_temp%'
          AND p.proname IN ('fn_search_semantic', 'fn_search_documents')
-       ORDER BY p.proname`,
-      [],
+       ORDER BY n.nspname, p.proname`,
+      [SYSTEM_SCHEMAS],
       explicitConnection
     ),
     optionalQuery(
       connections,
-      `SELECT table_name, column_name, data_type, udt_name
+      `SELECT table_schema, table_name, column_name, data_type, udt_name
        FROM information_schema.columns
-       WHERE table_schema = 'public'
-         AND table_name IN ('semantic_index', 'document_chunks')
+       WHERE table_schema = ANY($1::text[])
+         AND table_name = ANY($2::text[])
          AND column_name IN ('embedding', 'embedding_stale', 'model_version', 'tsv')
-       ORDER BY table_name, column_name`,
-      [],
+       ORDER BY table_schema, table_name, column_name`,
+      [searchedSchemas, EMBEDDING_TARGET_TABLES],
       explicitConnection
     ),
   ]);
@@ -1992,9 +2366,35 @@ async function handleEmbeddingStatus(connections, _args, explicitConnection = nu
   const vectorExtensionPresent =
     extensions.ok && extensions.rows.some((row) => row.extname === "vector");
 
+  // A7: the scope block is not decoration. Every count in this response is
+  // scoped by it, so it travels with them.
+  const scopeReport = {
+    target_tables: EMBEDDING_TARGET_TABLES,
+    searched_schemas: searchedSchemas,
+    schema_filter: scope.ok
+      ? searchedSchemas.length
+        ? `discovered — pg_class scanned unfiltered, targets resolved to: ${searchedSchemas.join(", ")}`
+        : "discovered — no non-system schema on this connection contains the target tables"
+      : `unresolved — the schema locator query failed: ${scope.error}`,
+    located_tables: scope.located_tables,
+    missing_tables: scope.missing_tables,
+    system_schemas_excluded: SYSTEM_SCHEMAS,
+  };
+
+  const scopeWarning = !scope.ok
+    ? `Schema scope could not be resolved (${scope.error}). Index and column counts below are NOT authoritative.`
+    : scope.missing_tables.length === EMBEDDING_TARGET_TABLES.length
+      ? `Neither ${EMBEDDING_TARGET_TABLES.join(" nor ")} exists in any non-system schema on this connection. ` +
+        "The zero counts below mean 'target absent', not 'target present and unindexed'."
+      : scope.missing_tables.length
+        ? `${scope.missing_tables.join(", ")} not found in any non-system schema; counts below cover only ` +
+          `${searchedSchemas.join(", ")}.`
+        : null;
+
   return successResponse({
     factory: redactFactory(project),
     pinned_connection: explicitConnection,
+    scope: scopeReport,
     embedding_provider: {
       plugin_builtin_query_embeddings: Boolean(embeddingSettings.apiKey),
       current_query_embedding_source: embeddingSettings.apiKey ? embeddingSettings.credentialSource : null,
@@ -2014,21 +2414,37 @@ async function handleEmbeddingStatus(connections, _args, explicitConnection = nu
     },
     pgvector_status: {
       extension_present: vectorExtensionPresent,
+      // A7: counts never travel without the scope that produced them.
+      searched_schemas: searchedSchemas,
       hnsw_index_count: hnswIndexes.length,
       gin_index_count: ginIndexes.length,
-      hnsw_indexes: hnswIndexes.map((row) => ({ tablename: row.tablename, indexname: row.indexname })),
-      gin_indexes: ginIndexes.map((row) => ({ tablename: row.tablename, indexname: row.indexname })),
+      hnsw_indexes: hnswIndexes.map((row) => ({
+        schemaname: row.schemaname,
+        tablename: row.tablename,
+        indexname: row.indexname,
+      })),
+      gin_indexes: ginIndexes.map((row) => ({
+        schemaname: row.schemaname,
+        tablename: row.tablename,
+        indexname: row.indexname,
+      })),
+      warning: scopeWarning,
     },
     config: config.ok ? { ...config, rows: redactConfigRows(config.rows) } : config,
     extensions,
     embedding_health: embeddingHealth,
-    indexes,
-    table_columns: tableColumns,
+    // A7: these two are the schema-filtered raw results. A bare `count: 0` on
+    // either is meaningless without the filter that produced it, so the filter
+    // is attached to the result rather than left implicit in the source.
+    indexes: { ...indexes, searched_schemas: searchedSchemas },
+    table_columns: { ...tableColumns, searched_schemas: searchedSchemas },
     search_functions: searchFunctions.ok
       ? {
           ok: true,
           count: searchFunctions.count,
+          searched_schemas: "all non-system schemas",
           rows: searchFunctions.rows.map((row) => ({
+            schema_name: row.schema_name,
             proname: row.proname,
             args: row.args,
           })),
@@ -2134,11 +2550,21 @@ async function handleClaimWork(connections, args, explicitConnection = null) {
   const verified = await verifyFactoryContext(connections, explicitConnection);
   if (!verified.ok) return errorResponse(verified.error, verified);
 
-  if (!(await tableExists(connections, "work_claims", explicitConnection))) {
-    currentOutcome().recordUnavailable("work_claims", "table is not installed for this factory");
+  const claimsTable = await resolveTable(connections, "work_claims", explicitConnection);
+  if (!claimsTable.exists) {
+    // A7: say where we looked. "Not installed" and "installed somewhere this
+    // connection's search_path cannot see" are different problems.
+    const scope = claimsTable.searched_schemas.length
+      ? claimsTable.searched_schemas.join(", ")
+      : "no resolvable search_path";
+    currentOutcome().recordUnavailable(
+      "work_claims",
+      `relation not resolvable on this connection (search_path: ${scope})`
+    );
     return successResponse({
       available: false,
-      message: "work_claims table is not installed for this factory yet.",
+      searched_schemas: claimsTable.searched_schemas,
+      message: `work_claims is not resolvable on this connection. Searched the active search_path: ${scope}.`,
     });
   }
   const project = connections.project();
@@ -2160,18 +2586,30 @@ async function handleClaimWork(connections, args, explicitConnection = null) {
     ],
     explicitConnection
   );
-  return successResponse({ available: true, claim: result.rows[0] || null });
+  return successResponse({
+    available: true,
+    claim_table_schema: claimsTable.schema,
+    claim: result.rows[0] || null,
+  });
 }
 
 async function handleReleaseWork(connections, args, explicitConnection = null) {
   const verified = await verifyFactoryContext(connections, explicitConnection);
   if (!verified.ok) return errorResponse(verified.error, verified);
 
-  if (!(await tableExists(connections, "work_claims", explicitConnection))) {
-    currentOutcome().recordUnavailable("work_claims", "table is not installed for this factory");
+  const claimsTable = await resolveTable(connections, "work_claims", explicitConnection);
+  if (!claimsTable.exists) {
+    const scope = claimsTable.searched_schemas.length
+      ? claimsTable.searched_schemas.join(", ")
+      : "no resolvable search_path";
+    currentOutcome().recordUnavailable(
+      "work_claims",
+      `relation not resolvable on this connection (search_path: ${scope})`
+    );
     return successResponse({
       available: false,
-      message: "work_claims table is not installed for this factory yet.",
+      searched_schemas: claimsTable.searched_schemas,
+      message: `work_claims is not resolvable on this connection. Searched the active search_path: ${scope}.`,
     });
   }
   const project = connections.project();
@@ -2511,6 +2949,18 @@ module.exports = {
     // P1 tool surface (issue #4 A12, B8).
     viewField,
     VIEW_COLUMNS,
+    // P4 (issue #4 A5, A7, F1).
+    probeIsMeasured,
+    probeIsOk,
+    probeState,
+    probeCoverage,
+    statusIcon,
+    resolveEmbeddingScope,
+    EMBEDDING_TARGET_TABLES,
+    SYSTEM_SCHEMAS,
+    TRUST_TRUSTED,
+    TRUST_PARTIAL,
+    TRUST_UNTRUSTED,
     assertToolNamesSafe,
     hostVisibleToolName,
     toolNameFits,
