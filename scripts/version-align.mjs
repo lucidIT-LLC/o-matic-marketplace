@@ -30,17 +30,66 @@ const skipTags = args.includes("--no-tags");
 const map = loadMap();
 const report = { ok: true, plugins: [], catalogParity: null };
 
-// (e) catalog parity — both files must be identical (Claude Code reads .claude-plugin/).
+// (e) catalog parity.
+//
+// Two distinct checks, because the catalogs are not all the same kind of file.
+// The two Claude catalogs are literal copies and must stay byte-identical.
+// The Codex catalog is structurally different by design (it carries a per-plugin
+// release{} key the Claude manifests dropped in decision #194), so comparing its
+// bytes is meaningless — what must hold is that every catalog agrees on every
+// plugin VERSION.
+//
+// This previously destructured `const [a, b]`, so a third catalog was read and
+// silently discarded. Adding .agents/plugins/marketplace.json to catalogFiles
+// therefore changed nothing, and the gate reported aligned while never looking
+// at it. That is not hypothetical: the shipped v2.2.1 tag carried a Codex
+// manifest reading 2.2.0.
 {
-  const files = map.catalogFiles.map((f) => join(REPO_ROOT, f));
+  const files = map.catalogFiles.map((f) => ({ rel: f, abs: join(REPO_ROOT, f) }));
+  const problems = [];
+
+  // byte parity across the Claude copies only
+  const claudeCopies = files.filter((f) => !f.rel.startsWith(".agents/"));
   try {
-    const [a, b] = files.map((f) => readFileSync(f, "utf8"));
-    report.catalogParity = a === b;
-    if (a !== b) report.ok = false;
+    const texts = claudeCopies.map((f) => readFileSync(f.abs, "utf8"));
+    if (!texts.every((t) => t === texts[0])) {
+      problems.push(`Claude catalog copies differ: ${claudeCopies.map((f) => f.rel).join(" vs ")}`);
+    }
   } catch (e) {
-    report.catalogParity = false;
+    problems.push(`unreadable Claude catalog: ${e.message}`);
+  }
+
+  // version parity across EVERY catalog, including Codex
+  const versionsByPlugin = new Map();
+  for (const f of files) {
+    let parsed;
+    try {
+      parsed = JSON.parse(readFileSync(f.abs, "utf8"));
+    } catch (e) {
+      problems.push(`unreadable catalog ${f.rel}: ${e.message}`);
+      continue;
+    }
+    for (const entry of parsed.plugins || []) {
+      if (!entry || !entry.name) continue;
+      const seen = versionsByPlugin.get(entry.name) || new Map();
+      const where = seen.get(entry.version) || [];
+      where.push(f.rel);
+      seen.set(entry.version, where);
+      versionsByPlugin.set(entry.name, seen);
+    }
+  }
+  for (const [plugin, byVersion] of versionsByPlugin) {
+    if (byVersion.size > 1) {
+      const detail = [...byVersion].map(([v, where]) => `${v} in ${where.join(", ")}`).join(" | ");
+      problems.push(`${plugin} version disagrees across catalogs: ${detail}`);
+    }
+  }
+
+  report.catalogParity = problems.length === 0;
+  report.catalogsChecked = files.map((f) => f.rel);
+  if (problems.length) {
     report.ok = false;
-    report.catalogParityError = e.message;
+    report.catalogParityError = problems.join("; ");
   }
 }
 
