@@ -21,6 +21,15 @@ const {
 
 const PLUGIN_VERSION = "2.2.1";
 
+// `--version` must answer and exit. It previously fell through to main(), which
+// booted the whole server, resolved a factory, and only exited when stdin closed
+// — so `npm run check` hung forever on a terminal. The check that was supposed to
+// prove the server starts instead guaranteed nobody ran it.
+if (process.argv.includes("--version") || process.argv.includes("-v")) {
+  process.stdout.write(`omatic-server-connection ${PLUGIN_VERSION}\n`);
+  process.exit(0);
+}
+
 async function main() {
   // B1 — restore a previously persisted factory selection before anything reads
   // the environment, so omatic_select_factory only has to be run once per
