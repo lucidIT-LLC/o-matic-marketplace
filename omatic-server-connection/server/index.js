@@ -4,6 +4,10 @@ const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio
 const {
   ListToolsRequestSchema,
   CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } = require("@modelcontextprotocol/sdk/types.js");
 
 const {
@@ -18,8 +22,14 @@ const {
   handleToolCall,
   setNotifyToolsChanged,
 } = require("./tools.js");
+const {
+  buildResourceList,
+  buildPromptList,
+  readResource,
+  getPrompt,
+} = require("./resources.js");
 
-const PLUGIN_VERSION = "3.0.1";
+const PLUGIN_VERSION = "3.1.0";
 
 // `--version` must answer and exit. It previously fell through to main(), which
 // booted the whole server, resolved a factory, and only exited when stdin closed
@@ -58,7 +68,15 @@ async function main() {
   const server = new Server(
     { name: "omatic-server-connection", version: PLUGIN_VERSION },
     {
-      capabilities: { tools: { listChanged: true } },
+      // B12 — three primitives, not one. Tools are model-controlled actions;
+      // Resources are app-controlled read-only data the host can browse and
+      // attach; Prompts are user-invocable templates. Declaring only tools
+      // forced every read-only surface to be an action the model had to choose.
+      capabilities: {
+        tools: { listChanged: true },
+        resources: {},
+        prompts: {},
+      },
       instructions: buildServerInstructions(),
     }
   );
@@ -71,6 +89,22 @@ async function main() {
     const { name, arguments: args } = request.params;
     return handleToolCall(connections, name, args || {});
   });
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: buildResourceList(),
+  }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) =>
+    readResource(connections, request.params.uri, handleToolCall)
+  );
+
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: buildPromptList(),
+  }));
+
+  server.setRequestHandler(GetPromptRequestSchema, async (request) =>
+    getPrompt(request.params.name, request.params.arguments)
+  );
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

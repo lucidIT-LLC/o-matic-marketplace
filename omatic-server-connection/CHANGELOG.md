@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.1.0 - 2026-08-02
+
+### Added
+- **Resources and Prompts — the server now declares all three MCP primitives.**
+  Through 3.0.1 it declared only `tools`, so every read-only surface had to be an
+  action the model chose to call. Five resources (`omatic://usage-guide`,
+  `omatic://factory`, `omatic://connections`, `omatic://tasks`,
+  `omatic://embedding-status`) and four prompts (`start-the-factory`,
+  `factory-health-check`, `diagnose-a-connection`, `explain-embedding-status`).
+  Resources delegate to the same handlers the tools use, so the
+  `outcome` / `degraded_reasons` / `results_trustworthy` envelope is inherited,
+  not reimplemented.
+
+### Changed
+- **Published measured baselines rather than adjectives** (punchlist J4): 5,834
+  lines, 30 tools, 5 resources, 4 prompts, 0.11 s cold start. The line count went
+  up, and the notes say so.
+
+### Not changed, deliberately
+- The read-only tools remain. Removing them is the cheap way to cut the tool
+  count, but `CLAUDE.md`, the Probot skill and six other factories name them
+  directly, and 3.0.0 already broke the tool surface once. Staged for the next
+  major.
+
 ## 3.0.1 - 2026-08-02
 
 Section C — the connection surface. 3.0.0 shipped an honest response envelope
