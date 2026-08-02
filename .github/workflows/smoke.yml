@@ -20,3 +20,13 @@ jobs:
       - name: omatic-server-connection smoke suite
         working-directory: omatic-server-connection/server
         run: npm run check
+
+  vendored-deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: committed node_modules matches the lockfile
+        run: node scripts/verify-vendored-deps.mjs
