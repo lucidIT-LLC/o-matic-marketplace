@@ -155,11 +155,21 @@ function parseBaseToolName(name) {
 const OUTCOME_COMPLETE = "complete";
 const OUTCOME_DEGRADED = "degraded";
 const OUTCOME_FAILED = "failed";
-const VALID_OUTCOMES = new Set([OUTCOME_COMPLETE, OUTCOME_DEGRADED, OUTCOME_FAILED]);
+// A9 — the fourth state. P0 shipped complete|degraded|failed, which left a
+// zero-row mutation indistinguishable from an effective one: releasing a claim
+// you never held returned `complete` with count:0, exactly like releasing one
+// you did. Both are "no error", but only one changed the world. `no_op` is that
+// distinction made structural — the statement ran, matched nothing, and wrote
+// nothing. It is not a degradation (nothing is broken, the answer is reliable)
+// and not a failure (no error occurred), so it needs its own state rather than
+// a flag on an existing one.
+const OUTCOME_NO_OP = "no_op";
+const VALID_OUTCOMES = new Set([OUTCOME_COMPLETE, OUTCOME_DEGRADED, OUTCOME_FAILED, OUTCOME_NO_OP]);
 const RESERVED_OUTCOME_KEYS = [
   "success",
   "outcome",
   "degraded_reasons",
+  "no_op_reasons",
   "results_trustworthy",
   "trust_level",
 ];
@@ -183,6 +193,7 @@ class OutcomeCollector {
   constructor() {
     this.failures = [];
     this.unavailable = [];
+    this.noops = [];
     this.okQueryCount = 0;
     this.rowsObserved = 0;
     this.fatal = false;
@@ -211,6 +222,17 @@ class OutcomeCollector {
     this.unavailable.push({ capability: String(capability), reason: String(reason || "unavailable") });
   }
 
+  // A9: a mutation executed cleanly and matched zero rows. Nothing failed and
+  // nothing changed. Callers must record this explicitly rather than letting a
+  // count:0 slide out under `complete` — the whole point is that the caller
+  // cannot tell those apart from the outcome field alone.
+  recordNoOp(mutation, reason) {
+    this.noops.push({
+      mutation: String(mutation),
+      reason: String(reason || "statement matched zero rows; nothing was changed"),
+    });
+  }
+
   markFatal(reason) {
     this.fatal = true;
     if (reason) this.failures.push({ sql: null, error: String(reason), connection: null });
@@ -227,17 +249,28 @@ class OutcomeCollector {
     ];
   }
 
+  // Kept in a channel of its own. A no-op is not a degradation, and folding it
+  // into degraded_reasons would make `degraded_reasons` mean two different
+  // things and quietly break the complete/degraded invariant below.
+  noOpReasons() {
+    return this.noops.map((n) => `no-op [${n.mutation}]: ${n.reason}`);
+  }
+
   outcome() {
     if (this.fatal) return OUTCOME_FAILED;
-    if (this.failures.length === 0 && this.unavailable.length === 0) return OUTCOME_COMPLETE;
     // Nothing readable came back — this is not a partial answer, it is no answer.
     if (this.failures.length > 0 && this.okQueryCount === 0) return OUTCOME_FAILED;
-    return OUTCOME_DEGRADED;
+    // Degradation outranks no_op: if something also broke, the breakage is the
+    // more important thing to report, and its reasons still ride along.
+    if (this.failures.length > 0 || this.unavailable.length > 0) return OUTCOME_DEGRADED;
+    if (this.noops.length > 0) return OUTCOME_NO_OP;
+    return OUTCOME_COMPLETE;
   }
 
   summarize() {
     const outcome = this.outcome();
     const degraded_reasons = this.reasons();
+    const no_op_reasons = this.noOpReasons();
     // Internal invariant: a clean outcome and a non-empty reason list must
     // never coexist. If this throws, the collector wiring is wrong and the
     // caller gets an error rather than a comfortable lie.
@@ -245,6 +278,17 @@ class OutcomeCollector {
       throw new Error(
         `Outcome invariant violated: outcome="complete" with ${degraded_reasons.length} degraded reason(s).`
       );
+    }
+    // A9 companion invariants: `complete` must also mean nothing was a no-op,
+    // and `no_op` must be backed by an actual recorded no-op. Either way round,
+    // an unbacked state is a wiring bug and must not reach the caller.
+    if (outcome === OUTCOME_COMPLETE && no_op_reasons.length > 0) {
+      throw new Error(
+        `Outcome invariant violated: outcome="complete" with ${no_op_reasons.length} no-op reason(s).`
+      );
+    }
+    if (outcome === OUTCOME_NO_OP && no_op_reasons.length === 0) {
+      throw new Error('Outcome invariant violated: outcome="no_op" with no recorded no-op.');
     }
     if (!VALID_OUTCOMES.has(outcome)) {
       throw new Error(`Outcome invariant violated: unknown outcome "${outcome}".`);
@@ -263,11 +307,23 @@ class OutcomeCollector {
     // distinction the boolean cannot hold moves to `trust_level`:
     //
     //   complete              -> true  / trusted    (green)
+    //   no_op                 -> true  / trusted    (green — see below)
     //   degraded, rows  > 0   -> false / partial    (amber — read what came back, but check the reasons)
     //   degraded, rows == 0   -> false / untrusted  (amber-to-red — an empty answer from a degraded call carries no information)
     //   failed                -> false / untrusted  (red)
+    //
+    // A9 x F1 (merge of P3 and P4): `no_op` joins `complete` on the clean side
+    // of both fields. F1's rule is "nothing was degraded", and a no-op degrades
+    // nothing — the statement ran, matched zero rows, and that zero IS the
+    // answer, measured rather than inferred. This is precisely the case F1's
+    // strictness must NOT sweep up: F1 removed the `rowsObserved > 0` escape
+    // hatch because rows from one query were laundering another's failure, not
+    // because a clean zero is untrustworthy. Note the two clauses cannot be
+    // collapsed into `rowsObserved > 0` again without reopening that hole —
+    // a no_op is trusted despite observing no rows, and a degraded call is
+    // untrusted regardless of how many it observed.
     const trust_level =
-      outcome === OUTCOME_COMPLETE
+      outcome === OUTCOME_COMPLETE || outcome === OUTCOME_NO_OP
         ? TRUST_TRUSTED
         : outcome === OUTCOME_DEGRADED && this.rowsObserved > 0
           ? TRUST_PARTIAL
@@ -276,7 +332,18 @@ class OutcomeCollector {
     return {
       outcome,
       degraded_reasons,
-      results_trustworthy: outcome === OUTCOME_COMPLETE,
+      no_op_reasons,
+      // "No rows" is only trustworthy when nothing was degraded. An empty array
+      // produced by a missing relation must never read as a clean zero.
+      // A no_op's zero IS the answer and was measured cleanly, so it is
+      // trustworthy despite observing no rows.
+      //
+      // F1 (P4) tightened the false branch from `this.rowsObserved > 0` to a
+      // flat false: a degraded call is never clean no matter how many rows some
+      // other query in the same request happened to return. The boolean is now
+      // exactly `trust_level === TRUST_TRUSTED` — one meaning, no gradation —
+      // and the amber/red distinction lives in trust_level alone.
+      results_trustworthy: outcome === OUTCOME_COMPLETE || outcome === OUTCOME_NO_OP,
       trust_level,
     };
   }
@@ -318,6 +385,7 @@ function errorResponse(message, extra = {}) {
       success: false,
       outcome: OUTCOME_FAILED,
       degraded_reasons: reasons,
+      no_op_reasons: collector.noOpReasons(),
       results_trustworthy: false,
       trust_level: TRUST_UNTRUSTED,
       error: message,
@@ -332,12 +400,16 @@ function errorResponse(message, extra = {}) {
 // response is stamped degraded/failed — with isError:true on failed, using the
 // same jsonResponse channel errorResponse already uses.
 function successResponse(data = {}) {
-  const { outcome, degraded_reasons, results_trustworthy, trust_level } = currentOutcome().summarize();
+  const { outcome, degraded_reasons, no_op_reasons, results_trustworthy, trust_level } =
+    currentOutcome().summarize();
   return jsonResponse(
     {
+      // A no_op is not an error — the call did what was asked and the answer is
+      // "nothing matched". success stays true; `outcome` carries the nuance.
       success: outcome !== OUTCOME_FAILED,
       outcome,
       degraded_reasons,
+      no_op_reasons,
       results_trustworthy,
       trust_level,
       ...stripReservedOutcomeKeys(data),
@@ -1687,6 +1759,62 @@ function startupViewForMode(payload) {
     : formatStartupView(payload);
 }
 
+// ── A15: the built-in probe, derived rather than declared ──
+//
+// Pure by design and separated from handleStartupRun so the honesty rule is
+// testable without a database: given observations, it returns the probe. The
+// old code was a static object literal that asserted status:"connected" and
+// "database query path verified" before any result had been looked at, so the
+// probe could not report anything except success.
+//
+// `connected` requires BOTH observations. Reachability alone is not the claim —
+// the readiness seed is part of the path this probe asserts is working, so a
+// reachable database with a dead seed is honestly `degraded`, not green.
+//
+// ── A5 (P4) — and it names the connector it actually exercised ──
+//
+// The connector id used to be the literal "postgres-omatic" regardless of which
+// connection carried the I/O. Pinned to `kb`, this measured factory_commons and
+// then stamped postgres-omatic — a verdict about a connector the run never
+// touched, written with the full authority of a measurement. Same defect A6
+// closed for caller-asserted probes, committed by the plugin itself.
+//
+// `connection` is therefore part of the observation set, alongside the session
+// and seed results: all three describe what actually happened. Callers that
+// supply one get the `postgres-cabinet-{name}` form, which fn_record_probe_result
+// canonicalizes and REJECTS when absent from mcp_registry — the honest outcome
+// being "no probe recorded for this connection", never a probe recorded against
+// someone else's connector. handleStartupRun always supplies it; the bare
+// default remains only for callers with no connection to name (unit tests).
+function deriveBuiltInPostgresProbe(observed) {
+  const {
+    sessionId = null,
+    seedOk = false,
+    seedValue = null,
+    seedError = null,
+    connection = null,
+  } = observed || {};
+  const sessionAnchored = sessionId !== undefined && sessionId !== null;
+  const seedObserved = Boolean(seedOk) && seedValue !== null && seedValue !== undefined;
+
+  const evidence = [
+    sessionAnchored
+      ? `factory_sessions INSERT returned session id ${sessionId}`
+      : "factory_sessions INSERT returned no session id",
+    seedObserved
+      ? `fn_seed_session_mcp_status returned ${JSON.stringify(seedValue)}`
+      : `fn_seed_session_mcp_status produced no value${seedError ? ` — ${seedError}` : ""}`,
+  ];
+
+  return {
+    connector_name: connection ? `postgres-cabinet-${connection}` : "postgres-omatic",
+    status: sessionAnchored && seedObserved ? "connected" : "degraded",
+    note: connection
+      ? `Startup runner on connection "${connection}": ${evidence.join("; ")}`
+      : `Startup runner: ${evidence.join("; ")}`,
+  };
+}
+
 async function handleStartupRun(connections, args, explicitConnection = null) {
   const verified = await verifyFactoryContext(connections, explicitConnection);
   if (!verified.ok) return errorResponse(verified.error, verified);
@@ -1712,15 +1840,32 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     [platform, sessionType, summary, resumeNotes, agentsActive, tenantId],
     explicitConnection
   );
-  const session = sessionResult.rows[0];
+  // A15: the probe below reports on this INSERT, so the INSERT's result has to
+  // be inspected rather than assumed. A RETURNING clause that yields no row
+  // used to produce a bare TypeError on `session.id`; now it is a stated
+  // failure, and the probe never gets the chance to call it "connected".
+  const session = sessionResult.rows[0] || null;
+  if (!session || session.id === undefined || session.id === null) {
+    currentOutcome().markFatal(
+      "factory_sessions INSERT returned no row; no session could be anchored."
+    );
+    return errorResponse(
+      "Startup could not open a factory session: the factory_sessions INSERT returned no row."
+    );
+  }
   const sessionId = session.id;
 
-  const seed = await q(
+  // A15: the seed is the other half of the built-in probe's evidence. It runs
+  // through optionalQuery so a seed failure degrades the response and the probe
+  // rather than aborting startup — and so the probe can actually see it.
+  const seed = await optionalQuery(
     connections,
     "SELECT fn_seed_session_mcp_status($1) AS seeded",
     [sessionId],
     explicitConnection
   );
+  const seedRow = seed.ok && Array.isArray(seed.rows) ? seed.rows[0] || null : null;
+  const seededValue = seedRow ? seedRow.seeded : null;
 
   // ── A6: measured probes are recorded; asserted probes are not ──
   //
@@ -1736,28 +1881,38 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
   // source:"caller_asserted" with recorded:false, and never reach the registry.
   // A model that genuinely measured a connector can still record it explicitly
   // through omatic_record_probe_result.
-  // ── A5: the built-in probe names the connector it actually exercised ──
   //
-  // This was hardcoded to "postgres-omatic" regardless of which connection the
-  // startup ran against. Pinned to `kb`, it measured factory_commons and then
-  // stamped postgres-omatic 'connected' — a verdict about a connector this run
-  // never touched, written with the full authority of a measurement. That is a
-  // restamp, and it is the same defect A6 closed for caller-asserted probes,
-  // committed by the plugin itself.
+  // ── A15: the probe reports the measurement, not the intention ──
   //
-  // The connector id is now derived from the connection that carried the
-  // INSERT and seed above. fn_record_probe_result canonicalizes the
-  // `postgres-cabinet-{name}` form and REJECTS an id absent from mcp_registry,
-  // which is the correct outcome: the honest report is "no probe recorded for
-  // this connection", not a probe recorded against someone else's connector.
+  // A6 established that only measured probes get recorded. It did not make the
+  // measured one honest: the probe was a static literal that hard-coded
+  // status:"connected" and the note "database query path verified", assembled
+  // before anything was inspected. It said "verified" because that was the
+  // hoped-for state, not because a result had been read. A seed that returned
+  // nothing still produced a green, authoritative row in
+  // mcp_registry.probe_status.
+  //
+  // Status and note are derived by deriveBuiltInPostgresProbe from the two
+  // operations actually executed above. A probe must report what happened.
+  //
+  // ── A5: and it names the connector it actually exercised ──
+  //
+  // The two halves of the same honesty rule, and they compose rather than
+  // compete: A15 fixes WHAT the probe claims, A5 fixes WHO it claims it about.
+  // A green status stamped on the wrong connector is no better than a green
+  // status stamped on no evidence, so the connection that carried the INSERT
+  // and seed above is passed in as a third observation. See
+  // deriveBuiltInPostgresProbe for why the id is derived rather than literal.
   const probedConnection = explicitConnection || connections.defaultName();
   const probeResults = [];
   const measuredProbes = [
-    {
-      connector_name: `postgres-cabinet-${probedConnection}`,
-      status: "connected",
-      note: `Startup runner: database query path verified on connection "${probedConnection}"`,
-    },
+    deriveBuiltInPostgresProbe({
+      sessionId,
+      seedOk: seed.ok,
+      seedValue: seededValue,
+      seedError: seed.ok ? null : seed.error,
+      connection: probedConnection,
+    }),
   ];
   for (const probe of measuredProbes) {
     // optionalQuery, not q: an unregistered connector must degrade this startup,
@@ -1871,7 +2026,7 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     pinned_connection: explicitConnection,
     identity: verified.identity,
     session,
-    seeded: seed.rows[0] ? seed.rows[0].seeded : null,
+    seeded: seededValue,
     probe_results: probeResults,
     asserted_probes: assertedProbes,
     brain_warm: brain.ok
@@ -2468,6 +2623,17 @@ async function handleReleaseWork(connections, args, explicitConnection = null) {
     [project.factory_id, args.resource_type, args.resource_id, args.claimed_by],
     explicitConnection
   );
+  // A9: the UPDATE is filtered on factory/resource/claimed_by/status='active'.
+  // Zero rows means no such active claim existed — the caller did not hold what
+  // it tried to release. That is a materially different result from a release
+  // that actually happened, and before no_op both returned outcome="complete".
+  const releasedCount = asNumber(result.count !== undefined ? result.count : result.rows.length, 0);
+  if (releasedCount === 0) {
+    currentOutcome().recordNoOp(
+      "omatic_release_work",
+      `no active work_claims row matched resource_type=${args.resource_type} resource_id=${args.resource_id} claimed_by=${args.claimed_by}; no claim was held, nothing was released`
+    );
+  }
   return successResponse({ available: true, released: result.rows, count: result.count });
 }
 
@@ -2778,6 +2944,8 @@ module.exports = {
     currentOutcome,
     successResponse,
     errorResponse,
+    // P3 probe honesty (issue #4 A15).
+    deriveBuiltInPostgresProbe,
     // P1 tool surface (issue #4 A12, B8).
     viewField,
     VIEW_COLUMNS,

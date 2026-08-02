@@ -9,7 +9,8 @@ const {
 const {
   ConnectionManager,
   loadConnections,
-  ensureFactoryJsonFromEnv,
+  readSelectionState,
+  restoreSelection,
 } = require("./connections.js");
 const {
   buildServerInstructions,
@@ -21,13 +22,24 @@ const {
 const PLUGIN_VERSION = "2.2.1";
 
 async function main() {
-  // A9 — upgrade migration: write factory.json from legacy hardcoded DSN if
-  // none exists yet at the resolved project root. No-op once factory.json is
-  // present, or if root looks like a plugin install dir.
-  ensureFactoryJsonFromEnv();
-
+  // B1 — restore a previously persisted factory selection before anything reads
+  // the environment, so omatic_select_factory only has to be run once per
+  // project rather than once per session. Applied to process.env directly.
   let connections;
   try {
+    const persisted = readSelectionState();
+    if (persisted) {
+      const restore = restoreSelection(process.env);
+      if (restore.restored) {
+        process.stderr.write(
+          `[omatic-server-connection] restored persisted factory selection: ${restore.factory_file}\n`
+        );
+      } else {
+        process.stderr.write(
+          `[omatic-server-connection] persisted factory selection not restored: ${restore.reason}\n`
+        );
+      }
+    }
     connections = new ConnectionManager(loadConnections());
   } catch (err) {
     process.stderr.write(`[omatic-server-connection] config error: ${err.message}\n`);
