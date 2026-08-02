@@ -22,11 +22,26 @@ const serverPackagePath = join(pluginRoot, "server", "package.json");
 const serverIndexPath = join(pluginRoot, "server", "index.js");
 const codexMarketplacePath = join(marketplaceRoot, ".agents", "plugins", "marketplace.json");
 const claudeMarketplacePath = join(marketplaceRoot, ".claude-plugin", "marketplace.json");
-const genericSkillPath = join(pluginRoot, "skills", "omatic-server-connection", "SKILL.md");
-
-for (const path of [codexPluginPath, claudePluginPath, mcpPath, agentPackPath, serverPackagePath, serverIndexPath, genericSkillPath]) {
+for (const path of [codexPluginPath, claudePluginPath, mcpPath, agentPackPath, serverPackagePath, serverIndexPath]) {
   assert(existsSync(path), `Missing required package file: ${path}`);
 }
+
+// Follow agent-pack.json's declared canonical_skill paths rather than restating
+// one here. A hardcoded copy is a second source of truth that only announces
+// itself when the two disagree — which is exactly what happened when the
+// operating-guide skill was renamed and this line still named the old directory.
+// Checking every declared skill is also strictly stronger than checking one.
+const declaredSkills = readJson(agentPackPath)?.skills || [];
+assert(declaredSkills.length > 0, "agent-pack.json declares no skills");
+for (const skill of declaredSkills) {
+  assert(skill.canonical_skill, `agent-pack.json skill "${skill.name || "?"}" declares no canonical_skill`);
+  const skillPath = join(pluginRoot, skill.canonical_skill);
+  assert(
+    existsSync(skillPath),
+    `agent-pack.json declares a skill file that does not exist: ${skill.canonical_skill}`
+  );
+}
+const genericSkillPath = join(pluginRoot, declaredSkills[0].canonical_skill);
 
 const codexPlugin = readJson(codexPluginPath);
 const claudePlugin = readJson(claudePluginPath);
