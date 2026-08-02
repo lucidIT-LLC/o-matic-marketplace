@@ -53,7 +53,7 @@ Default MCP endpoints:
 
 ```text
 WordPress:  /wp-json/mcp/mcp-adapter-default-server
-Elementor:  /wp-json/mcp/elementor-mcp-server
+Elementor:  /wp-json/mcp/emcp-tools-server
 ```
 
 Override the path during setup when a project uses a different WordPress or Elementor MCP endpoint.
@@ -93,7 +93,7 @@ The WordPress connector checks the upstream MCP tool surface by default and stor
   "site_url": "https://example.com",
   "username": "admin",
   "application_password_env": "ELEMENTOR_CLIENT_APP_PASSWORD",
-  "mcp_path": "/wp-json/mcp/elementor-mcp-server",
+  "mcp_path": "/wp-json/mcp/emcp-tools-server",
   "verify_mcp": true
 }
 ```
@@ -163,7 +163,7 @@ OMATIC_WP_TIMEOUT_MS=15000
 OMATIC_ELEMENTOR_URL=https://example.com
 OMATIC_ELEMENTOR_USERNAME=admin
 OMATIC_ELEMENTOR_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
-OMATIC_ELEMENTOR_MCP_PATH=/wp-json/mcp/elementor-mcp-server
+OMATIC_ELEMENTOR_MCP_PATH=/wp-json/mcp/emcp-tools-server
 OMATIC_ELEMENTOR_REST_API_ROOT=https://example.com/wp-json/
 OMATIC_ELEMENTOR_TIMEOUT_MS=15000
 ```
