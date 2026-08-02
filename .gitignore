@@ -2,3 +2,11 @@
 
 # build artifacts — never commit
 node_modules/
+# EXCEPT the plugin runtime. Neither Claude Code nor Codex runs an install step
+# on plugin install — verified against both platforms' docs and against all five
+# installed caches on 2026-08-02, every one of which holds a real vendored tree.
+# .mcp.json launches `node ${PLUGIN_ROOT}/server/index.js` cold, so if these
+# files are absent the plugin does not start. Vendoring is not a choice we made;
+# it is the only shape that works. Guarded by scripts/verify-vendored-deps.mjs.
+!omatic-server-connection/server/node_modules/
+!omatic-server-connection/server/node_modules/**
