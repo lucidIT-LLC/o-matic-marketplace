@@ -19,11 +19,18 @@ const {
   successResponse,
   errorResponse,
   viewField,
+  VIEW_COLUMNS,
   assertToolNamesSafe,
   hostVisibleToolName,
   MAX_BARE_TOOL_NAME_BYTES,
   HOST_TOOL_NAME_LIMIT,
   HOST_TOOL_NAMESPACE,
+  // P4 (A5, A7, F1)
+  probeIsMeasured,
+  probeIsOk,
+  probeState,
+  probeCoverage,
+  statusIcon,
 } = __test__;
 
 let pass = 0;
@@ -35,11 +42,32 @@ const green = {
   // A12: `connector_id` is the column v_mcp_readiness actually exposes. This
   // fixture said `connector_name` and the assertion below still passed, because
   // the formatter guessed through an `||` chain — the fixture encoded the bug.
-  readiness: { ok: true, rows: [{ status_label: "OK", connector_id: "postgres-omatic" }] },
+  //
+  // A5: `probed_at` + `probe_result` are what make this row GREEN. Without a
+  // measurement taken this session it is an inherited verdict, and the fixture
+  // that omitted them was encoding exactly the defect A5 closes: a green label
+  // with nothing behind it.
+  readiness: {
+    ok: true,
+    rows: [
+      {
+        status_label: "OK",
+        connector_id: "postgres-omatic",
+        probe_result: "connected",
+        probed_at: "2026-08-02T12:00:00Z",
+        probe_note: null,
+        criticality: "critical",
+      },
+    ],
+  },
   embedding: { ok: true, rows: [{ stale: 0, unembedded: 0 }] },
   summary: {
     ok: true,
-    rows: [{ governance_health: { active_rule_count: 40, rule_count_target: 40 }, open_task_total: "3", last_summary: "resume here" }],
+    // A12: `resume_notes` is the column v_startup_summary actually exposes.
+    // This fixture said `last_summary`, a column the view has never had, and
+    // the assertion passed anyway — the same defect one layer up, in the
+    // VIEW_COLUMNS contract itself.
+    rows: [{ governance_health: { active_rule_count: 40, rule_count_target: 40 }, open_task_total: "3", resume_notes: "resume here" }],
   },
   agreements: { ok: true, rows: [] },
   rules: { ok: true, rows: [] },
@@ -48,6 +76,7 @@ const green = {
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const warnConn = clone(green);
 warnConn.readiness.rows[0].status_label = "DEGRADED";
+warnConn.readiness.rows[0].probe_result = "unavailable";
 
 // fast view — green
 const gv = formatFastStartupView({
@@ -148,7 +177,11 @@ const degradedPayload = JSON.parse(degradedRes.content[0].text);
 ok(degradedPayload.outcome === "degraded", "A2 partial failure reports degraded");
 ok(degradedRes.isError === false, "A2 degraded is not an MCP protocol error");
 ok(degradedPayload.success === true, "A2 degraded still returns data");
-ok(degradedPayload.results_trustworthy === true, "A3 degraded WITH rows stays trustworthy");
+// F1 (P4): this used to assert `results_trustworthy === true`. A degraded
+// response with rows is amber, never clean — Smith's amendment — so the
+// boolean is now false and the amber/red gradation moves to trust_level.
+ok(degradedPayload.results_trustworthy === false, "F1 a degraded response is never results_trustworthy");
+ok(degradedPayload.trust_level === "partial", "F1 degraded WITH rows is amber (trust_level=partial)");
 
 const unavailableRes = runWithOutcome(() => {
   const c = currentOutcome();
@@ -199,6 +232,7 @@ const legacyShaped = clone(green);
 delete legacyShaped.readiness.rows[0].connector_id;
 legacyShaped.readiness.rows[0].connector_name = "postgres-omatic";
 legacyShaped.readiness.rows[0].status_label = "DEGRADED";
+legacyShaped.readiness.rows[0].probe_result = "unavailable";
 const legacyView = formatFastStartupView({
   mode: "fast",
   startup: legacyShaped,
@@ -444,7 +478,21 @@ const startupConnections = {
       probeCalls.push(params[0]);
       return { rows: [{ result: "ok" }], count: 1 };
     }
-    if (/v_mcp_readiness/.test(sql)) return { rows: [{ connector_id: "postgres-omatic", status_label: "OK" }], count: 1 };
+    if (/v_mcp_readiness/.test(sql)) {
+      return {
+        rows: [
+          {
+            connector_id: "postgres-omatic",
+            status_label: "OK",
+            probe_result: "connected",
+            probed_at: "2026-08-02T12:00:00Z",
+            probe_note: null,
+            criticality: "critical",
+          },
+        ],
+        count: 1,
+      };
+    }
     if (/v_startup_summary/.test(sql)) return { rows: [{ open_task_total: "1" }], count: 1 };
     return { rows: [], count: 0 };
   },
@@ -459,7 +507,18 @@ const runRes = parse(
   })
 );
 ok(probeCalls.length === 1, `A6 exactly one probe was written to the registry (got ${probeCalls.length})`);
-ok(probeCalls[0] === "postgres-omatic", "A6 the written probe is the one the plugin actually measured");
+// A5 (P4): the built-in probe was hardcoded to "postgres-omatic" regardless of
+// which connection carried the I/O. It now names the connection it actually
+// exercised; fn_record_probe_result canonicalizes the postgres-cabinet-{name}
+// form. fakeConnections()'s default connection is "omatic".
+ok(
+  probeCalls[0] === "postgres-cabinet-omatic",
+  `A5 the written probe names the connection actually exercised (got ${probeCalls[0]})`
+);
+ok(
+  runRes.probe_results[0].probed_connection === "omatic",
+  "A5 the probe result records which connection was measured"
+);
 ok(!probeCalls.includes("omatic-elementor"), "A6 a caller-asserted probe never reaches fn_record_probe_result");
 ok(runRes.asserted_probes.length === 2, "A6 caller-asserted probes are echoed back, not discarded");
 ok(
@@ -511,6 +570,308 @@ ok(
   /omatic_search_memory:name|omatic_execute_sql:name/.test(instructions),
   "B8 server instructions name pinned variants that actually exist"
 );
+
+// ══════════════════════════════════════════════════════════════════════════
+// P4 (issue #4: A5, A7, A12 follow-through, F1)
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── A5 — probes assert measurement, not memory ──
+//
+// fn_seed_session_mcp_status writes probe_result='untested' with probed_at
+// NULL and demotes any prior verdict to a note. The plugin must not undo that.
+const untestedRow = {
+  connector_id: "omatic-elementor",
+  status_label: "DEGRADED",
+  probe_result: "untested",
+  probed_at: null,
+  probe_note: "Not probed this session. Prior verdict: connected as of 2026-06-16",
+  criticality: "standard",
+};
+// The dangerous shape: a green label with no measurement behind it. The DB no
+// longer produces this, but the plugin must not be the thing that trusts it if
+// anything ever does — an inherited verdict wearing a current label is exactly
+// what A5 forbids presenting as current.
+const inheritedOkRow = {
+  connector_id: "filesystem",
+  status_label: "OK",
+  probe_result: "connected",
+  probed_at: null,
+  probe_note: "Not probed this session. Prior verdict: connected as of 2026-06-13",
+  criticality: "standard",
+};
+
+ok(probeIsMeasured(green.readiness.rows[0]) === true, "A5 a row with probed_at counts as measured");
+ok(probeIsMeasured(untestedRow) === false, "A5 an untested row is not measured");
+ok(probeIsMeasured(inheritedOkRow) === false, "A5 status_label=OK with probed_at NULL is NOT a measurement");
+ok(probeIsOk(inheritedOkRow) === false, "A5 an inherited verdict never counts as OK");
+ok(probeState(untestedRow) === "UNTESTED", "A5 an unprobed connector reports UNTESTED, not its label");
+ok(probeState(inheritedOkRow) === "UNTESTED", "A5 a restamped OK reports UNTESTED");
+ok(probeState(green.readiness.rows[0]) === "OK", "A5 a genuinely measured OK still reports OK");
+
+// statusIcon: the labels v_mcp_readiness actually emits must not read benign.
+ok(statusIcon("CRITICAL-DOWN") === "FAIL", "A5 CRITICAL-DOWN renders FAIL, not INFO");
+ok(statusIcon("REDUCED") === "WARN", "A5 REDUCED renders WARN, not INFO");
+ok(statusIcon("untested") === "WARN", "A5 untested renders WARN, not INFO");
+ok(statusIcon("BLOCKED") === "FAIL", "A5 BLOCKED renders FAIL");
+ok(statusIcon("OK") === "OK", "A5 OK still renders OK");
+
+// Full view: untested is named, carries its prior verdict as history, and
+// denies GREEN.
+const mixed = clone(green);
+mixed.readiness.rows.push(clone(untestedRow), clone(inheritedOkRow));
+const mixedView = formatStartupView({ startup: mixed, session: {}, identity: {}, factory: {} });
+ok(/omatic-elementor: UNTESTED \(not probed this session\)/.test(mixedView), "A5 full view names the unprobed connector");
+ok(/filesystem: UNTESTED/.test(mixedView), "A5 full view reports an inherited OK as UNTESTED");
+ok(!/filesystem: OK/.test(mixedView), "A5 full view never renders an unmeasured connector as OK");
+ok(/Prior verdict: connected/.test(mixedView), "A5 the demoted prior verdict is surfaced as history");
+ok(/1\/3 connectors measured OK/.test(mixedView), "A5 only measured connectors count toward the OK tally");
+ok(/2 never probed this session/.test(mixedView), "A5 the unprobed count is stated, not omitted");
+ok(/Factory status: CHECK/.test(mixedView), "A5 unprobed connectors deny a GREEN factory status");
+ok(!/Factory status: GREEN/.test(mixedView), "A5 a partly-unprobed factory is never GREEN");
+ok(/Probe coverage: 1\/3 measured this session/.test(mixedView), "A5 full view states probe coverage in words");
+
+// A fully-measured factory is still allowed to be GREEN — the point is honesty,
+// not pessimism.
+ok(/Factory status: GREEN/.test(formatStartupView({ startup: green, session: {}, identity: {}, factory: {} })), "A5 a fully measured factory still reports GREEN");
+
+// Fast view: untested is an UNKNOWN, and UNKNOWNs suppress GREEN.
+const mixedFast = formatFastStartupView({ mode: "fast", startup: mixed, session: {}, identity: {}, factory: {} });
+ok(!/Status: GREEN/.test(mixedFast), "A5 fast view is never GREEN with unprobed connectors");
+ok(/Status: UNKNOWN/.test(mixedFast), "A5 fast view reports UNKNOWN when probes are missing");
+ok(/not probed this session/.test(mixedFast), "A5 fast view says why");
+ok(!/could not be read/.test(mixedFast), "A5 fast view no longer miscalls an unprobed connector an unreadable source");
+
+// Critical unprobed connectors are named individually; the rest collapse.
+const manyUntested = clone(green);
+for (let i = 0; i < 12; i += 1) {
+  manyUntested.readiness.rows.push({ ...clone(untestedRow), connector_id: `enh-${i}`, criticality: "enhancement" });
+}
+manyUntested.readiness.rows.push({ ...clone(untestedRow), connector_id: "postgres-lucidit", criticality: "critical" });
+const manyFast = formatFastStartupView({ mode: "fast", startup: manyUntested, session: {}, identity: {}, factory: {} });
+ok(/CRITICAL connector postgres-lucidit not probed/.test(manyFast), "A5 an unprobed CRITICAL connector is named individually");
+ok(/12 non-critical connectors not probed this session/.test(manyFast), "A5 non-critical unprobed connectors collapse to one line");
+
+// probe_coverage travels in the packet, not only in the rendered text.
+const coverage = probeCoverage(mixed.readiness.rows, true);
+ok(coverage.total === 3 && coverage.measured_this_session === 1 && coverage.untested === 2, "A5 probe_coverage counts measured vs untested");
+ok(coverage.untested_connectors.some((c) => /Prior verdict/.test(c.prior_verdict_note || "")), "A5 probe_coverage carries the demoted prior verdict");
+// Unprobed connectors drop the RESPONSE to degraded, not just the rendered
+// text. A startup that reports `complete` while connectors carry no
+// measurement is asserting something it never checked.
+const partiallyProbed = {
+  ...startupConnections,
+  query: async (name, sql, params) => {
+    if (/v_mcp_readiness/.test(sql)) {
+      return {
+        rows: [
+          { connector_id: "postgres-omatic", status_label: "OK", probe_result: "connected", probed_at: "2026-08-02T12:00:00Z", probe_note: null, criticality: "critical" },
+          { connector_id: "omatic-elementor", status_label: "DEGRADED", probe_result: "untested", probed_at: null, probe_note: "Not probed this session. Prior verdict: connected as of 2026-06-16", criticality: "standard" },
+        ],
+        count: 2,
+      };
+    }
+    return startupConnections.query(name, sql, params);
+  },
+};
+const partialStartup = parse(await handleToolCall(partiallyProbed, "omatic_factory_startup", {}));
+ok(partialStartup.outcome === "degraded", `A5 unprobed connectors make the startup response degraded (got ${partialStartup.outcome})`);
+ok(partialStartup.results_trustworthy === false, "A5 a startup with unmeasured connectors is not clean");
+ok(
+  partialStartup.degraded_reasons.some((r) => /connector_probe_coverage/.test(r) && /omatic-elementor/.test(r)),
+  "A5 the unmeasured connector is named in degraded_reasons"
+);
+ok(partialStartup.startup.probe_coverage.untested === 1, "A5 probe_coverage ships inside the startup packet");
+// A fully-measured startup is still clean — honesty, not blanket pessimism.
+const fullyProbed = parse(await handleToolCall(startupConnections, "omatic_factory_startup", {}));
+ok(fullyProbed.outcome === "complete", `A5 a fully measured startup stays complete (got ${fullyProbed.outcome})`);
+
+// A13 follow-on: the health check inherits that verdict rather than reporting HEALTHY.
+const partialHealth = parse(await handleToolCall(partiallyProbed, "omatic_factory_health_check", {}));
+ok(partialHealth.health === "DEGRADED", `A5 health check reports DEGRADED when probes are missing (got ${partialHealth.health})`);
+
+const blindCoverage = probeCoverage([], false);
+ok(blindCoverage.readable === false && blindCoverage.untested === "UNKNOWN", "A5 unreadable readiness yields UNKNOWN coverage, not zero");
+ok(blindCoverage.measured_this_session !== 0, "A5 unreadable readiness never reports 0 measured as if it were a finding");
+
+// ── A7 — inspection tools declare their search scope ──
+//
+// omatic_embedding_status filtered schemaname='public'. Against `kb`, where
+// both tables live in a `kb` schema carrying 2 HNSW and 2 GIN indexes, it
+// returned ok:true / count:0 / warning:null — indistinguishable from a
+// correctly-scoped finding of zero.
+const kbShaped = (schema = "kb") => ({
+  ...fakeConnections(),
+  query: async (_name, sql, params) => {
+    if (/current_database\(\)/.test(sql)) return { rows: [{ db_name: "f_omatic", db_user: "u" }], count: 1 };
+    // The locator runs UNFILTERED by schema — that is the whole fix.
+    if (/FROM pg_class c/.test(sql) && /c\.relname = ANY/.test(sql)) {
+      if (!schema) return { rows: [], count: 0 };
+      return {
+        rows: [
+          { schema_name: schema, table_name: "document_chunks" },
+          { schema_name: schema, table_name: "semantic_index" },
+        ],
+        count: 2,
+      };
+    }
+    if (/FROM pg_indexes/.test(sql)) {
+      const schemas = params[0] || [];
+      if (!schemas.includes(schema)) return { rows: [], count: 0 };
+      return {
+        rows: [
+          { schemaname: schema, tablename: "document_chunks", indexname: "idx_kb_chunks_fts", indexdef: "USING gin (tsv)" },
+          { schemaname: schema, tablename: "document_chunks", indexname: "idx_kb_chunks_hnsw", indexdef: "USING hnsw (embedding vector_cosine_ops)" },
+          { schemaname: schema, tablename: "semantic_index", indexname: "idx_kb_si_fts", indexdef: "USING gin (tsv)" },
+          { schemaname: schema, tablename: "semantic_index", indexname: "idx_kb_si_hnsw", indexdef: "USING hnsw (embedding vector_cosine_ops)" },
+        ],
+        count: 4,
+      };
+    }
+    if (/pg_extension/.test(sql)) return { rows: [{ extname: "vector", extversion: "0.8.2" }], count: 1 };
+    return { rows: [], count: 0 };
+  },
+});
+
+const kbStatus = parse(await handleToolCall(kbShaped(), "omatic_embedding_status", {}));
+ok(kbStatus.pgvector_status.hnsw_index_count === 2, `A16 embedding_status finds the HNSW indexes in a non-public schema (got ${kbStatus.pgvector_status.hnsw_index_count})`);
+ok(kbStatus.pgvector_status.gin_index_count === 2, `A16 embedding_status finds the GIN indexes in a non-public schema (got ${kbStatus.pgvector_status.gin_index_count})`);
+ok(
+  kbStatus.pgvector_status.hnsw_index_count + kbStatus.pgvector_status.gin_index_count === 4,
+  "A16 all 4 indexes on the kb-shaped connection are reported"
+);
+ok(JSON.stringify(kbStatus.scope.searched_schemas) === '["kb"]', "A7 the response declares the schemas it searched");
+ok(kbStatus.pgvector_status.searched_schemas.includes("kb"), "A7 index counts travel with their scope");
+ok(kbStatus.scope.missing_tables.length === 0, "A7 no target table is reported missing when both were located");
+ok(kbStatus.pgvector_status.warning === null, "A7 a correctly-scoped, complete search carries no warning");
+ok(kbStatus.indexes.searched_schemas.includes("kb"), "A7 the raw index result carries its filter");
+ok(kbStatus.table_columns.searched_schemas.includes("kb"), "A7 the raw column result carries its filter");
+
+// A target outside the searched schemas is degraded, not zero.
+const emptyStatus = parse(await handleToolCall(kbShaped(null), "omatic_embedding_status", {}));
+ok(emptyStatus.outcome === "degraded", `A7 a target absent from every searched schema is degraded, not complete (got ${emptyStatus.outcome})`);
+ok(emptyStatus.results_trustworthy === false, "A7 a zero-index result from a degraded scope is not trustworthy");
+ok(emptyStatus.pgvector_status.hnsw_index_count === 0, "A7 the count is still zero");
+ok(emptyStatus.pgvector_status.warning !== null, "A7 but the zero now carries a warning explaining it");
+ok(/target absent/.test(emptyStatus.pgvector_status.warning), "A7 the warning distinguishes 'absent' from 'present and unindexed'");
+ok(
+  emptyStatus.degraded_reasons.some((r) => /embedding_target_tables/.test(r)),
+  "A7 the missing target is named in degraded_reasons"
+);
+
+// The hardcoded filter must be gone from the CODE, not just from the output —
+// the fake connection above cannot see a SQL change, so this is asserted
+// against the source. Every literal form of the pin is covered, because the
+// first fix only removed the one spelling the bug report happened to quote.
+for (const pin of [
+  /schemaname\s*=\s*'public'/,
+  /table_schema\s*=\s*'public'/,
+  /nspname\s*=\s*'public'/,
+  /to_regclass\(\s*`public\./,
+  /'public\.\$\{/,
+]) {
+  ok(!pin.test(toolsCode), `A7 no hardcoded public-schema pin matching ${pin} remains in tools.js`);
+}
+// The scope must be resolved before it is used, not defaulted.
+ok(/resolveEmbeddingScope/.test(toolsCode), "A7 embedding status resolves its schema scope");
+ok(
+  /searched_schemas/.test(toolsCode),
+  "A7 the searched schemas are part of the response contract"
+);
+
+// A7 applied to the other schema-filtered probe: omatic_claim_work gated on
+// to_regclass('public.work_claims') while its INSERT referenced the table
+// unqualified. Absence must now say where it looked.
+const noClaims = {
+  ...fakeConnections(),
+  query: async (_name, sql) => {
+    if (/current_database\(\)/.test(sql)) return { rows: [{ db_name: "f_omatic", db_user: "u" }], count: 1 };
+    if (/to_regclass/.test(sql)) {
+      return { rows: [{ relation: null, schema_name: null, search_path: ["pg_catalog", "public"] }], count: 1 };
+    }
+    return { rows: [], count: 0 };
+  },
+};
+const claimMiss = parse(await handleToolCall(noClaims, "omatic_claim_work", { resource_type: "t", resource_id: "r", claimed_by: "c" }));
+ok(claimMiss.available === false, "A7 an unresolvable work_claims still reports available:false");
+ok(
+  JSON.stringify(claimMiss.searched_schemas) === '["pg_catalog","public"]',
+  "A7 claim_work discloses the search_path it resolved against"
+);
+ok(/pg_catalog, public/.test(claimMiss.message), "A7 the absence message names the schemas searched");
+ok(claimMiss.outcome === "degraded", "A7 an unresolvable capability is degraded, not complete");
+// The unqualified probe must match the DML it gates.
+ok(!/to_regclass\(\$1\)[\s\S]{0,80}public\./.test(toolsCode), "A7 the work_claims probe is not pinned to the public schema");
+ok(/current_schemas\(true\)::text\[\]/.test(toolsCode), "A7 the search_path is cast to text[] so the driver actually parses it");
+
+// ── A12 follow-through — every declared column exists on its source view ──
+//
+// Captured from information_schema.columns on the live factory DB (o-matic,
+// 2026-08-02). VIEW_COLUMNS declaring a column absent from this map is the same
+// defect as a formatter reading one: `last_resume_notes` and `last_summary`
+// were declared for two releases and resolved to null on every single call.
+const LIVE_VIEW_COLUMNS = {
+  readiness: "connector_id, display_name, criticality, category, agent_primary, platform_availability, fallback_behavior, probe_result, fallback_active, probe_note, probed_at, status_label".split(", "),
+  embedding: "tier, tenant_id, total_rows, embedded, unembedded, stale, distinct_models, oldest_embed, newest_embed".split(", "),
+  summary: "last_session_id, session_date, platform, session_type, resume_notes, open_tasks, open_task_total, p1_tasks, agents, embedding_health, decommissioned_terms, sop_index, governance_health".split(", "),
+  agreements: "agent_name, agreement_version, enforcement_model, required_rule_types, loaded_rules, tenant_id, missing_rule_types, status_label".split(", "),
+  rules: "id, enforcement, rule, category, rule_type, agent, applies_to, tenant_id, updated_at".split(", "),
+};
+for (const [source, declared] of Object.entries(VIEW_COLUMNS)) {
+  const live = LIVE_VIEW_COLUMNS[source];
+  ok(Array.isArray(live), `A12 view source "${source}" has a recorded live column list`);
+  const phantom = (live ? declared.filter((c) => !live.includes(c)) : declared);
+  ok(phantom.length === 0, `A12 VIEW_COLUMNS.${source} declares no column the view lacks (phantom: ${phantom.join(", ")})`);
+}
+for (const removed of ["last_resume_notes", "last_summary"]) {
+  let threw = false;
+  try {
+    viewField("summary", { [removed]: "x" }, removed);
+  } catch {
+    threw = true;
+  }
+  ok(threw, `A12 the phantom column "${removed}" is no longer readable through the contract`);
+}
+// And the fast view now actually finds the resume point it was always missing.
+ok(/Resume: resume here/.test(gv), "A12 the fast view reads resume_notes, the column the view really has");
+
+// ── F1 — a degraded response is never a clean one ──
+const trustCases = [
+  ["complete", (c) => c.recordQuerySuccess(3), true, "trusted"],
+  ["degraded with rows", (c) => { c.recordQuerySuccess(3); c.recordQueryFailure("SELECT 1", new Error("x")); }, false, "partial"],
+  ["degraded with zero rows", (c) => { c.recordQuerySuccess(0); c.recordUnavailable("work_claims", "absent"); }, false, "untrusted"],
+  ["failed", (c) => c.recordQueryFailure("SELECT 1", new Error("x")), false, "untrusted"],
+];
+for (const [label, setup, expectTrust, expectLevel] of trustCases) {
+  const payload = JSON.parse(
+    runWithOutcome(() => {
+      setup(currentOutcome());
+      return successResponse({ rows: [] });
+    }).content[0].text
+  );
+  ok(payload.results_trustworthy === expectTrust, `F1 ${label}: results_trustworthy=${expectTrust}`);
+  ok(payload.trust_level === expectLevel, `F1 ${label}: trust_level=${expectLevel} (got ${payload.trust_level})`);
+}
+// The specific hole F1 closes: rows from ONE query no longer launder a failure
+// in another into a clean envelope.
+const launderPayload = JSON.parse(
+  runWithOutcome(() => {
+    const c = currentOutcome();
+    c.recordQuerySuccess(40); // an unrelated query answered
+    c.recordQueryFailure("SELECT * FROM v_embedding_health", new Error("relation does not exist"));
+    return successResponse({ rows: [] });
+  }).content[0].text
+);
+ok(launderPayload.results_trustworthy === false, "F1 rows from one query cannot launder another query's failure");
+ok(launderPayload.trust_level === "partial", "F1 that case is amber, not green and not red");
+
+// trust_level is computed, never accepted from a handler.
+const spoofTrust = JSON.parse(
+  runWithOutcome(() => {
+    currentOutcome().recordQueryFailure("SELECT 1", new Error("boom"));
+    return successResponse({ trust_level: "trusted", results_trustworthy: true });
+  }).content[0].text
+);
+ok(spoofTrust.trust_level === "untrusted", "F1 a handler cannot spoof trust_level");
 
 if (failures.length) {
   console.error(`startup-modes smoke: ${pass} passed, ${failures.length} FAILED`);
