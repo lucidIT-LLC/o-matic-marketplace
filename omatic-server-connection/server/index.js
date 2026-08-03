@@ -21,6 +21,7 @@ const {
   buildToolList,
   handleToolCall,
   setNotifyToolsChanged,
+  setClientSupportsResources,
 } = require("./tools.js");
 const {
   buildResourceList,
@@ -29,7 +30,7 @@ const {
   getPrompt,
 } = require("./resources.js");
 
-const PLUGIN_VERSION = "3.1.1";
+const PLUGIN_VERSION = "3.2.0";
 
 // `--version` must answer and exit. It previously fell through to main(), which
 // booted the whole server, resolved a factory, and only exited when stdin closed
@@ -90,9 +91,42 @@ async function main() {
     return handleToolCall(connections, name, args || {});
   });
 
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: buildResourceList(),
-  }));
+  // B13 — the tool-surface cut, decided by BEHAVIOR rather than by declaration.
+  //
+  // The obvious implementation — read the client's capabilities and drop the
+  // read-only tools if it declared resource support — cannot work: `resources`
+  // is a SERVER capability. Clients declare roots, sampling and elicitation;
+  // there is no client-side "I can read resources" flag to read. Asking for one
+  // returns {} on every client, which would have silently meant "cut nothing,
+  // ever" while looking like a working feature.
+  //
+  // A client that has actually CALLED resources/list has proven the capability
+  // rather than asserted it. From that point the resource-backed read-only tools
+  // are redundant for this client, so they leave tools/list and a
+  // tools/list_changed notification tells the host to refresh. A client that
+  // never reads resources keeps the full tool surface forever, which is the
+  // correct outcome for a host that cannot use the alternative — and is why this
+  // did not have to wait on B9's unanswered Cowork question.
+  //
+  // The tools stay CALLABLE either way. This changes what is advertised, not
+  // what is dispatched.
+  let resourceSurfaceProven = false;
+  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    if (!resourceSurfaceProven) {
+      resourceSurfaceProven = true;
+      setClientSupportsResources(true);
+      try {
+        server.sendToolListChanged();
+      } catch {
+        // A host that cannot receive the notification simply keeps the list it
+        // already has. Nothing about the cut is worth failing a read over.
+      }
+      process.stderr.write(
+        "[omatic-server-connection] client read resources/list — read-only tools now served as Resources\n"
+      );
+    }
+    return { resources: buildResourceList() };
+  });
 
   server.setRequestHandler(ReadResourceRequestSchema, async (request) =>
     readResource(connections, request.params.uri, handleToolCall)
