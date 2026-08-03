@@ -1,5 +1,34 @@
 # Changelog
 
+## 3.2.0 - 2026-08-02
+
+### Changed
+- **The read-only tools leave `tools/list` for clients that can read Resources**
+  (punchlist B13). `omatic_usage_guide`, `omatic_list_connections` and
+  `omatic_embedding_status` are published as Resources in 3.1.0; on a client that
+  has actually called `resources/list` they are removed from the tool list and a
+  `tools/list_changed` notification asks the host to refresh. **30 tools → 27.**
+  A client that never reads Resources keeps all 30, because for that host the
+  alternative does not exist. All three remain **callable by name either way** —
+  this changes what is advertised, not what is dispatched.
+  `omatic_resolve_factory` is exempt: rule #288 names it at halt level.
+
+  The obvious implementation — read the client's declared capabilities — is
+  impossible. `resources` is a **server** capability; clients declare `roots`,
+  `sampling` and `elicitation`, and there is no client-side "I can read
+  resources" flag. Asking for one returns `{}` on every client, which would have
+  meant "cut nothing, ever" while looking like a working feature. Behavior is the
+  only honest signal available.
+
+- **The compatibility tier now separates verified from expected** (punchlist B9).
+  `cowork-with-mcp-config` sat in one list beside `claude-code` and `codex`,
+  reading as equally proven. It is not: Cowork's lifecycle, cwd and
+  `list_changed` behavior have no public documentation, and what is held about
+  them internally is telemetry, not a test. `platform_support` now reports
+  `verified` and `expected_untested` separately, each with the evidence behind
+  it. Rule #284 forbids claiming a capability that has not been demonstrated —
+  the claim is not withdrawn, it is labelled.
+
 ## 3.1.1 - 2026-08-02
 
 ### Changed

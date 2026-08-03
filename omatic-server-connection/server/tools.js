@@ -1129,6 +1129,36 @@ function tool(input) {
   return input;
 }
 
+// B13 — read-only surfaces that are ALSO published as MCP Resources.
+//
+// These are data, not actions. On a client that implements Resources they do not
+// belong in tools/list, where they compete for tool-selection attention with the
+// calls that change something. On a client that does NOT implement Resources,
+// removing them would delete the capability outright — losing omatic_list_connections
+// on a host with no resource support would take away the connection-diagnosis
+// surface that section C was built to provide.
+//
+// So the cut is conditional on what the connected client actually declared at
+// initialize, not on what we hope it supports. This is why B13 could ship without
+// waiting for B9: we no longer need to KNOW whether Cowork implements Resources —
+// each client tells us, and is served accordingly.
+//
+// omatic_resolve_factory is deliberately NOT in this set. Rule #288 is a halt-level
+// rule naming it as the startup call, so it stays a tool on every host regardless.
+const RESOURCE_BACKED_READ_ONLY_TOOLS = new Set([
+  "omatic_usage_guide",
+  "omatic_list_connections",
+  "omatic_embedding_status",
+]);
+
+// Set by index.js once the transport is connected and the client's declared
+// capabilities are known. Null means "not yet known" — in which case nothing is
+// cut, because an unknown client is treated as the least capable one.
+let clientSupportsResources = null;
+function setClientSupportsResources(value) {
+  clientSupportsResources = value === true;
+}
+
 function buildToolList(connections) {
   const project = connections.project();
   const baseTools = [
@@ -1623,8 +1653,19 @@ function buildToolList(connections) {
     };
   });
 
+  const all = disclosed.concat(perConnectionTools);
+
+  // B13 — drop the resource-backed read-only tools only for a client that told us
+  // it can read Resources. A client that declared nothing keeps the full surface.
+  const published = clientSupportsResources
+    ? all.filter((entry) => {
+        const bare = entry.name.split(":")[0];
+        return !RESOURCE_BACKED_READ_ONLY_TOOLS.has(bare);
+      })
+    : all;
+
   // Fail loudly here rather than let the host truncate or shadow a name.
-  return assertToolNamesSafe(disclosed.concat(perConnectionTools));
+  return assertToolNamesSafe(published);
 }
 
 function connectionName(connections) {
@@ -1724,8 +1765,20 @@ async function handleUsageGuide(connections, args = {}, explicitConnection = nul
     active_connection: activeName,
     pinned_connection: explicitConnection,
     connections: connectionSummaries,
+    // B9 — a compatibility tier is a claim, and rule #284 forbids claiming a
+    // capability that has not been demonstrated. "cowork-with-mcp-config" sat in
+    // the same list as codex and claude-code, which reads as equally verified. It
+    // is not: Cowork's lifecycle, working directory and list_changed behavior have
+    // no public documentation, and every claim held about them internally is
+    // telemetry rather than a test. Splitting the tier is the honest fix — the
+    // claim is not withdrawn, it is labelled with the evidence behind it.
     platform_support: {
-      full_mcp: ["codex", "claude-code", "cowork-with-mcp-config", "generic-stdio-mcp-host"],
+      verified: ["claude-code", "codex"],
+      verified_note:
+        "Exercised against a live factory: claude-code by direct stdio probe, codex by observed plugin-page behavior and manifest reads.",
+      expected_untested: ["cowork-with-mcp-config", "generic-stdio-mcp-host"],
+      expected_untested_note:
+        "Any stdio MCP host should work — nothing here is host-specific — but neither has been run against a live factory and confirmed. Treat as expected, not as supported. Report what you observe rather than assuming this list is right.",
       prompt_only: ["google-gemini", "ollama", "generic-chat"],
       note:
         "Prompt-only hosts can use bundled skills, but factory DB operations require this MCP server or an equivalent tool bridge.",
@@ -3865,6 +3918,8 @@ module.exports = {
   buildToolList,
   handleToolCall,
   setNotifyToolsChanged,
+  setClientSupportsResources,
+  RESOURCE_BACKED_READ_ONLY_TOOLS,
   PER_CONNECTION_BASE_TOOLS,
   // Test affordance (Factory 3.0 startup modes) — pure helpers, no side effects.
   __test__: {
