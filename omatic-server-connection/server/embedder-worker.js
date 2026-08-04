@@ -72,17 +72,29 @@ async function resolveSecretPointer(connections, name, tenant, value) {
   if (typeof value !== "string" || !value.startsWith("factory.secrets:")) return value;
   const secretKey = value.slice("factory.secrets:".length).trim();
   if (!secretKey) return null;
-  const result = await connections.query(
-    name,
-    `
-      SELECT secret_value
-      FROM factory.secrets
-      WHERE tenant_id = $1 AND secret_key = $2
-      ORDER BY updated_at DESC NULLS LAST, id DESC
-      LIMIT 1
-    `,
-    [tenant, secretKey]
-  );
+  let result;
+  try {
+    result = await connections.query(
+      name,
+      `
+        SELECT secret_value
+        FROM factory.secrets
+        WHERE tenant_id = $1 AND secret_key = $2
+        ORDER BY updated_at DESC NULLS LAST, id DESC
+        LIMIT 1
+      `,
+      [tenant, secretKey]
+    );
+  } catch (error) {
+    // getEmbeddingConfig already guards its own table lookup this way; this one
+    // did not, so a factory holding a factory.secrets: pointer WITHOUT the table
+    // crashed the Embedder instead of degrading. Verified by probe against a
+    // live factory that has no factory.secrets: the branch threw 42P01.
+    // Returning null lets the caller fall through to OPENAI_API_KEY and report a
+    // missing credential, which is the same outcome as an unresolvable pointer.
+    if (!isUndefinedTableError(error)) throw error;
+    return null;
+  }
   return result.rows[0]?.secret_value || null;
 }
 

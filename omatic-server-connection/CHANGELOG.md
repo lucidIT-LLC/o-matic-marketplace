@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.3.0 - 2026-08-04
 
 ### Added
 - **The plugin can no longer fail silently when its runtime is absent** (task #143,
@@ -48,11 +48,27 @@
   missing. A literal there would be a second source of truth (KB-0414 Step 5);
   a smoke assertion proves the relay has not drifted.
 
+### Fixed
+- **Embedder config resolution**, recovered from `beta` where it had been
+  stranded since 2026-06-28 and never reached the 3.x line. `getEmbeddingConfig`
+  falls back from `factory.factory_config` to `factory.config` on `42P01`, so a
+  factory on the older kernel layout can still find its embedding credentials;
+  config values that arrive as JSON strings are decoded; and a value of the form
+  `factory.secrets:<key>` is resolved out of `factory.secrets` at read time.
+
+- `resolveSecretPointer` no longer crashes the Embedder on a factory that holds
+  a `factory.secrets:` pointer but has no `factory.secrets` table. It guards
+  `42P01` the way `getEmbeddingConfig` already did and returns null, letting the
+  caller fall through to `OPENAI_API_KEY` and report a missing credential.
+  Verified by probe against a live factory with no such table: the branch threw
+  before the guard and returns null after it.
+
 ### Known gaps
 - POSIX hosts only. A Windows host has no `/bin/sh`, needs its own launcher, and
   is not claimed here — rule #284 cuts both ways.
-- Cherry-picked `dbb5453` (embedder secret-pointer + `factory.config` schema
-  fallback), stranded on the stale `beta` branch since 2026-06-28.
+- `server/embedder-worker.js` executes on require — it has no main guard — so
+  importing it for inspection runs the worker. Not changed here; noted because
+  it is surprising.
 
 ## 3.2.0 - 2026-08-02
 
