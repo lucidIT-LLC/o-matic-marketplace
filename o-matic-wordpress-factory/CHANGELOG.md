@@ -2,6 +2,46 @@
 
 All notable changes to the O-Matic WordPress Factory plugin are documented here.
 
+## 1.2.0 - 2026-08-04
+
+### Fixed
+- **The Codex manifest registered zero servers.** `.mcp.json` declared its
+  servers under `mcp_servers`; hosts read `mcpServers`. The wrong key is not an
+  error — it is an empty object, so both connectors were silently absent with
+  nothing in any log to say so. This is why installing the plugin produced
+  nothing a desktop host could use.
+
+- **Both connectors declared `"command": "node"`**, which works in every
+  terminal-launched host and fails in every GUI-launched one: a GUI app inherits
+  the minimal system PATH, so a bare interpreter name is unresolvable and the
+  server is never spawned (KB-0418 defect A). The manifests now spawn
+  `/bin/sh bin/omatic-wp-launch.sh <entry> <label>`. The launcher resolves an
+  interpreter from `OMATIC_NODE`, PATH, and the absolute locations a GUI host
+  cannot see, then execs the real connector unchanged.
+
+### Added
+- `bin/omatic-wp-launch.sh` and `bin/omatic-wp-degraded-server.sh`, ported from
+  omatic-server-connection 3.3.0. With no usable runtime the launcher execs a
+  dependency-free POSIX-sh MCP server that completes the handshake and publishes
+  `omatic_wp_runtime_status`, whose description names the cause. A connector that
+  cannot start now says so instead of appearing unconfigured.
+- `OMATIC_FORCE_NO_RUNTIME=1` exercises advisory mode on a working machine.
+
+### Verified
+- `version-align` exit 0 across 7 declared sources and 3 catalogs.
+- Both connectors boot through the launcher and report 1.2.0.
+- Both fall back to advisory mode under `OMATIC_FORCE_NO_RUNTIME=1`, returning
+  `1.2.0-advisory` and exactly one tool.
+
+### Known gaps
+- POSIX hosts only. Windows has no `/bin/sh` and is not claimed (rule #284).
+- The desktop host does not expose arbitrary env to plugin servers, so
+  `OMATIC_WP_*` overrides stay unexpanded there. Not fatal — the connectors read
+  `.omatic/wordpress-factory.json` — but env-only configuration will not work on
+  that host.
+- No `.mcpb` bundle yet; desktop-extension packaging remains open.
+
+
 ## 1.1.1 — 2026-08-02
 
 ### Fixed

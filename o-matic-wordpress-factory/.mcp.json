@@ -1,9 +1,11 @@
 {
-  "mcp_servers": {
+  "mcpServers": {
     "o-matic-wordpress-connector": {
-      "command": "node",
+      "command": "/bin/sh",
       "args": [
-        "${PLUGIN_ROOT}/server/index.mjs"
+        "${PLUGIN_ROOT}/bin/omatic-wp-launch.sh",
+        "server/index.mjs",
+        "wordpress"
       ],
       "env": {
         "OMATIC_PROJECT_ROOT": "${CODEX_WORKSPACE}",
@@ -20,9 +22,11 @@
       "cwd": "${PLUGIN_ROOT}"
     },
     "o-matic-elementor-connector": {
-      "command": "node",
+      "command": "/bin/sh",
       "args": [
-        "${PLUGIN_ROOT}/server/elementor.mjs"
+        "${PLUGIN_ROOT}/bin/omatic-wp-launch.sh",
+        "server/elementor.mjs",
+        "elementor"
       ],
       "env": {
         "OMATIC_PROJECT_ROOT": "${CODEX_WORKSPACE}",
