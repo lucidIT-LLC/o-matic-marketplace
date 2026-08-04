@@ -190,7 +190,16 @@ STEP 4 — Platform probe refinement + report
 +- -> Factory ready
 
 STEP 5 — Standalone mode
-|- "Probot: Standalone mode. o-matic-server plugin unavailable.
+|- IF the only tool present is omatic_runtime_status -> ADVISORY MODE, not
+|    standalone. The plugin installed correctly; its runtime did not resolve.
+|    Call omatic_runtime_status once, then open with its one-sentence cause:
+|    "Probot: Advisory mode — [cause from omatic_runtime_status]. Skills load;
+|     the factory brain does not. Every factory-internal fact is unverified
+|     until the runtime is resolved."
+|    Do NOT diagnose the database, the network, TLS or credentials. None of
+|    them produce a missing tool surface (KB-0417). Report the tool's remedy
+|    and stop.
+|- ELSE "Probot: Standalone mode. o-matic-server plugin unavailable.
 |   Plan and route only — no governance, no memory recall, no session log."
 |- Apply standalone fallback rules (Section 5)
 +- Do not re-attempt plugin this session.
@@ -335,6 +344,8 @@ Probot routes new-factory setup to Carver (SQL + bootstrap) + Fred (file writes)
 **Sage mode** = storage offline. Plugin still works, file ops blocked.
 
 **Standalone mode** = o-matic-server plugin unavailable. Filesystem may still work, governance enforcement does not.
+
+**Advisory mode** = the plugin is installed and running, but its Node runtime did not resolve, so the server started in the degraded shell fallback. The tell is a tool surface of exactly one tool, `omatic_runtime_status`. Skills load and remain useful for planning, routing and advice; no factory read or write is possible, so every factory-internal fact is unverified. Declare it at callsign with the cause the tool reports, and treat the remedy it returns as the whole of the diagnosis — this failure is a launch problem, never a database, network or credential problem (KB-0418, KB-0417).
 
 Both can coexist. Declare both if both apply.
 

@@ -1,9 +1,9 @@
 {
   "mcpServers": {
     "omatic-server-connection": {
-      "command": "node",
+      "command": "/bin/sh",
       "args": [
-        "${PLUGIN_ROOT}/server/index.js"
+        "${PLUGIN_ROOT}/bin/omatic-launch.sh"
       ],
       "env": {
         "OMATIC_PLATFORM": "codex",

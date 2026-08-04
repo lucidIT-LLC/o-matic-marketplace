@@ -41,6 +41,25 @@ if (process.argv.includes("--version") || process.argv.includes("-v")) {
   process.exit(0);
 }
 
+// #143 — if the launcher resolved an interpreter the host could not see, say so
+// in the host log. KB-0417 E1 makes the host log the first place to look when a
+// tool surface is absent, so the log is where the evidence has to be. A silent
+// success here is what made the PATH failure take a session to find.
+const MIN_NODE_MAJOR = 18;
+{
+  const nodeMajor = Number.parseInt(process.versions.node.split(".")[0], 10);
+  if (process.env.OMATIC_RESOLVED_NODE) {
+    process.stderr.write(
+      `[omatic-server-connection] runtime resolved by launcher: ${process.env.OMATIC_RESOLVED_NODE} (node ${process.versions.node})\n`
+    );
+  }
+  if (!Number.isFinite(nodeMajor) || nodeMajor < MIN_NODE_MAJOR) {
+    process.stderr.write(
+      `[omatic-server-connection] WARNING: running Node ${process.versions.node}; this server requires >= ${MIN_NODE_MAJOR}. Continuing, but treat every result as unsupported.\n`
+    );
+  }
+}
+
 async function main() {
   // B1 — restore a previously persisted factory selection before anything reads
   // the environment, so omatic_select_factory only has to be run once per

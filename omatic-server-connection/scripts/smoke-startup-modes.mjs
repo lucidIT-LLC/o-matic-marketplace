@@ -486,8 +486,9 @@ const fakeConnections = (names = FIVE) => ({
 
 const surface = buildToolList(fakeConnections());
 // 34 in 3.0.0, was 99 before B8. Section C adds two base tools with no pinned
-// variants — omatic_test_connection and omatic_edit_connection — so 36.
-ok(surface.length === 36, `B8 tool surface is 36, was 99 (got ${surface.length})`);
+// variants — omatic_test_connection and omatic_edit_connection — so 36. #143
+// adds omatic_runtime_status, also unpinned, so 37.
+ok(surface.length === 37, `B8 tool surface is 37, was 99 (got ${surface.length})`);
 ok(
   surface.filter((t) => t.name.includes(":")).length === 15,
   "B8 pinned variants are 3 families x 5 connections = 15"

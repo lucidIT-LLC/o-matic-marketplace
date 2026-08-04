@@ -1,5 +1,59 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **The plugin can no longer fail silently when its runtime is absent** (task #143,
+  rule #284). The manifest now spawns `/bin/sh bin/omatic-launch.sh` instead of a
+  bare `node`. The launcher resolves an interpreter from `OMATIC_NODE`, `PATH`,
+  and the absolute locations a GUI-launched host cannot see (Homebrew,
+  `/usr/local`, `~/.local/bin`, nvm, fnm, volta, asdf), then execs the real
+  server unchanged.
+
+  When no usable runtime exists it execs `bin/omatic-degraded-server.sh` —
+  **advisory mode** — a dependency-free POSIX-sh MCP server that completes the
+  handshake and publishes exactly one tool, `omatic_runtime_status`, whose
+  description names the cause. The tool surface is never zero, so the failure is
+  loud instead of being indistinguishable from an unresolved factory.
+
+  Rule #284 required a compatibility tier and nothing verified it, because the
+  check everyone reached for lived in `server/index.js` — which is Node, and so
+  cannot run in the case it was meant to detect. Detection had to move below the
+  runtime. Cost of the unfixed version: one full session (KB-0417), including a
+  proposed 93 MB download for an interpreter already on the machine.
+
+- `omatic_runtime_status`, published in **both** modes. In advisory mode it is
+  the only tool; in normal mode it reports the measured runtime and returns
+  `mode: "full"`. Classified `meta`, so a `read_only` or `disabled` connection
+  can still be diagnosed. Tool surface 36 -> 37.
+
+- `usage_guide.runtime` — Node version, minimum, whether the launcher resolved
+  an interpreter the host's PATH could not. Measured from the running process,
+  next to the `platform_support` block that is only declared.
+
+- `scripts/smoke-runtime-degrade.mjs`, wired into `npm run check`. Drives the
+  launcher through both outcomes and asserts the failing one is loud —
+  FA-2026-01 Step 6. `OMATIC_FORCE_NO_RUNTIME=1` reproduces advisory mode on a
+  working machine, which is the only way this path is reachable in a test.
+
+### Changed
+- `smoke-codex-plugin.mjs` required `command === "node"`, which enforced the
+  exact defect KB-0418 names. It now requires an absolute command and the
+  launcher in `args` — strictly stronger than the assertion it replaces.
+- Probot's skill gains an advisory-mode branch: a surface of only
+  `omatic_runtime_status` means the runtime failed to resolve, not that the
+  database, network, TLS or credentials are at fault. Report the cause and stop.
+- The launcher lifts the version out of `package.json` with `sed` and hands it to
+  the advisory server, which cannot read JSON without the runtime it is reporting
+  missing. A literal there would be a second source of truth (KB-0414 Step 5);
+  a smoke assertion proves the relay has not drifted.
+
+### Known gaps
+- POSIX hosts only. A Windows host has no `/bin/sh`, needs its own launcher, and
+  is not claimed here — rule #284 cuts both ways.
+- Cherry-picked `dbb5453` (embedder secret-pointer + `factory.config` schema
+  fallback), stranded on the stale `beta` branch since 2026-06-28.
+
 ## 3.2.0 - 2026-08-02
 
 ### Changed

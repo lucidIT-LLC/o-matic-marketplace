@@ -77,8 +77,25 @@ assert(Object.prototype.hasOwnProperty.call(mcp, "mcpServers"), "Codex .mcp.json
 assert(mcp.mcpServers?.["omatic-server-connection"], "Codex .mcp.json must register omatic-server-connection");
 
 const serverConfig = mcp.mcpServers["omatic-server-connection"];
-assert(serverConfig.command === "node", "Codex MCP server command must be node");
-assert(Array.isArray(serverConfig.args) && serverConfig.args.includes("${PLUGIN_ROOT}/server/index.js"), "Codex MCP args must launch ${PLUGIN_ROOT}/server/index.js");
+// #143 — this used to require command === "node", which enforced the exact
+// defect KB-0418 names: a bare interpreter is unresolvable on a GUI-launched
+// host, because it does not inherit the login shell PATH. The server was then
+// never spawned and the host reported no tools, which is indistinguishable from
+// an unresolved factory. The contract is now an ABSOLUTE command that always
+// exists, with interpreter discovery moved into the launcher — a strictly
+// stronger assertion than the one it replaces.
+assert(
+  typeof serverConfig.command === "string" && serverConfig.command.startsWith("/"),
+  `Codex MCP server command must be an absolute path, got "${serverConfig.command}"`
+);
+assert(
+  Array.isArray(serverConfig.args) && serverConfig.args.includes("${PLUGIN_ROOT}/bin/omatic-launch.sh"),
+  "Codex MCP args must launch ${PLUGIN_ROOT}/bin/omatic-launch.sh"
+);
+assert(
+  existsSync(join(pluginRoot, "bin", "omatic-launch.sh")),
+  "Codex manifest points at a launcher that does not exist in the package"
+);
 assert(!Object.prototype.hasOwnProperty.call(serverConfig, "cwd"), "Codex MCP config must not pin cwd; Cowork falls back to process.cwd() when env vars are not expanded");
 assert(serverConfig.env?.OMATIC_PLATFORM === "codex", "Codex MCP env must set OMATIC_PLATFORM=codex");
 assert(serverConfig.env?.OMATIC_PROJECT_ROOT === "${CODEX_WORKSPACE}", "Codex MCP env must set OMATIC_PROJECT_ROOT=${CODEX_WORKSPACE}");

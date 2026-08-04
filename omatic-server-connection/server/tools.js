@@ -21,6 +21,36 @@ const {
 // entry — the string cannot drift again.
 const GUIDE_VERSION = require("./package.json").version;
 
+// #143 — rule #284 requires a compatibility tier and nothing verified it. The
+// check has to distinguish two facts that a declared tier conflates: which
+// hosts we claim to support, and whether the runtime under THIS process
+// actually satisfies the engine floor. Only the second is measurable here.
+//
+// The total-absence case is not measurable here at all — no Node means no
+// JavaScript — which is why bin/omatic-launch.sh owns detection and this
+// function only reports what a process that did start is running on.
+const MIN_NODE_MAJOR = 18;
+
+function describeRuntime() {
+  const version = process.versions?.node || null;
+  const major = version ? Number.parseInt(version.split(".")[0], 10) : NaN;
+  const satisfies = Number.isFinite(major) && major >= MIN_NODE_MAJOR;
+  return {
+    node_version: version,
+    minimum_major: MIN_NODE_MAJOR,
+    satisfies_minimum: satisfies,
+    // Set by the launcher when it resolved an interpreter the host's PATH could
+    // not. Absent means the process was started some other way — directly by a
+    // terminal host, or by a manifest that still names a bare `node`.
+    resolved_by_launcher: process.env.OMATIC_RESOLVED_NODE || null,
+    launcher_in_use: Boolean(process.env.OMATIC_RESOLVED_NODE),
+    status: satisfies ? "ok" : "below_minimum",
+    note: satisfies
+      ? "Measured from the running process, not declared."
+      : `Running Node ${version || "unknown"}; this server requires >= ${MIN_NODE_MAJOR}. Behaviour past this point is unsupported.`,
+  };
+}
+
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_EMBEDDING_BASE_URL = "https://api.openai.com/v1";
 
@@ -823,6 +853,11 @@ const TOOL_ACCESS = new Map([
   // strand the operator with no way back.
   ["omatic_usage_guide", "meta"],
   ["omatic_resolve_factory", "meta"],
+  // #143 — reports process facts only, never touches a database. Meta for the
+  // same reason as the connection surface: it is how a broken install gets
+  // diagnosed, so gating it behind a permission level would strand exactly the
+  // operator who needs it.
+  ["omatic_runtime_status", "meta"],
   ["omatic_select_factory", "meta"],
   ["omatic_list_connections", "meta"],
   ["omatic_test_connection", "meta"],
@@ -1181,6 +1216,21 @@ function buildToolList(connections) {
     tool({
       name: "omatic_resolve_factory",
       description: "Resolve the active O-Matic factory from the project folder context.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    }),
+    tool({
+      // #143 — this tool exists in BOTH modes, which is the point of it. The
+      // advisory server in bin/omatic-degraded-server.sh publishes it as its
+      // only tool; here it reports a healthy runtime. A skill can therefore
+      // name it unconditionally, and its presence-with-nothing-else is the
+      // signal that the runtime failed to resolve.
+      name: "omatic_runtime_status",
+      description:
+        "Report the measured runtime this server is running on: Node version, whether it meets the minimum, and whether the launcher had to resolve an interpreter the host's PATH could not see. If this is the ONLY omatic tool available, the plugin is in advisory mode and no factory database access is possible.",
       inputSchema: {
         type: "object",
         properties: {},
@@ -1783,6 +1833,12 @@ async function handleUsageGuide(connections, args = {}, explicitConnection = nul
       note:
         "Prompt-only hosts can use bundled skills, but factory DB operations require this MCP server or an equivalent tool bridge.",
     },
+    // #143 — the runtime tier, MEASURED rather than declared. platform_support
+    // above is a claim about hosts; this is a fact about the process answering
+    // right now. If you are reading this at all, the runtime resolved: the
+    // no-runtime case cannot reach JavaScript and is reported instead by the
+    // advisory-mode server in bin/omatic-degraded-server.sh.
+    runtime: describeRuntime(),
     recommended_flow: [
       "Call omatic_resolve_factory to confirm the workspace-pinned factory before DB work.",
       "For startup, call omatic_factory_startup_run rather than manually composing startup queries.",
@@ -3869,6 +3925,13 @@ async function routeToolCall(connections, name, args) {
       return handleUsageGuide(connections, args || {}, explicitConnection);
     case "omatic_resolve_factory":
       return handleResolveFactory(connections, args || {}, explicitConnection);
+    case "omatic_runtime_status":
+      return successResponse({
+        mode: "full",
+        mode_note:
+          "The Node runtime resolved and the full tool surface is available. Advisory mode is reported by the shell fallback server, not by this handler.",
+        runtime: describeRuntime(),
+      });
     case "omatic_factory_startup":
       return handleStartup(connections, args || {}, explicitConnection);
     case "omatic_factory_health_check":
