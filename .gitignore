@@ -10,3 +10,6 @@ node_modules/
 # it is the only shape that works. Guarded by scripts/verify-vendored-deps.mjs.
 !omatic-server-connection/server/node_modules/
 !omatic-server-connection/server/node_modules/**
+
+# Built .mcpb bundles — release artifacts, not source.
+dist/

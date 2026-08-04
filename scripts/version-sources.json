@@ -121,6 +121,12 @@
           "path": "smith/.codex-plugin/plugin.json",
           "field": "version",
           "label": "codex plugin.json"
+        },
+        {
+          "type": "regex",
+          "path": "smith/skills/smith/SKILL.md",
+          "pattern": "<!--\\s*version:\\s*([^\\s|]+)",
+          "label": "smith SKILL.md header"
         }
       ]
     },
@@ -142,6 +148,12 @@
           "path": "jo/.codex-plugin/plugin.json",
           "field": "version",
           "label": "codex plugin.json"
+        },
+        {
+          "type": "regex",
+          "path": "jo/skills/jo/SKILL.md",
+          "pattern": "<!--\\s*version:\\s*([^\\s|]+)",
+          "label": "jo SKILL.md header"
         }
       ]
     },
@@ -163,6 +175,12 @@
           "path": "tim/.codex-plugin/plugin.json",
           "field": "version",
           "label": "codex plugin.json"
+        },
+        {
+          "type": "regex",
+          "path": "tim/skills/tim/SKILL.md",
+          "pattern": "<!--\\s*version:\\s*([^\\s|]+)",
+          "label": "tim SKILL.md header"
         }
       ]
     },
@@ -184,6 +202,12 @@
           "path": "rimmer/.codex-plugin/plugin.json",
           "field": "version",
           "label": "codex plugin.json"
+        },
+        {
+          "type": "regex",
+          "path": "rimmer/skills/rimmer/SKILL.md",
+          "pattern": "<!--\\s*version:\\s*([^\\s|]+)",
+          "label": "rimmer SKILL.md header"
         }
       ]
     }

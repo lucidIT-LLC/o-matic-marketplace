@@ -1,0 +1,52 @@
+{
+  "manifest_version": "0.3",
+  "name": "omatic-server-connection",
+  "display_name": "O-Matic Server Connection",
+  "version": "3.3.0",
+  "description": "Connects a host to an O-Matic Server factory brain and ships Probot, Fred, Data and Embedder.",
+  "long_description": "The MCP server that connects Claude Desktop to an O-Matic Server. One install serves many factories through a per-project .omatic/factory.json. Ships the Probot (orchestrator), Fred (storage and connection CRUD), Data (analyst and DBA) and Embedder (background vector refresh) skills. Connects to a factory brain; does not bundle a database.",
+  "author": {
+    "name": "James Walker",
+    "url": "https://o-matic.io"
+  },
+  "homepage": "https://o-matic.io",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lucidIT-LLC/o-matic-marketplace"
+  },
+  "license": "MIT",
+  "keywords": ["omatic", "factory", "postgres", "pgvector", "mcp"],
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"],
+      "env": {
+        "OMATIC_PLATFORM": "claude-desktop",
+        "OMATIC_PROJECT_ROOT": "${user_config.project_root}",
+        "OMATIC_NODE": "${user_config.node_path}"
+      }
+    }
+  },
+  "user_config": {
+    "project_root": {
+      "type": "directory",
+      "title": "Factory project folder",
+      "description": "The folder containing .omatic/factory.json. This replaces the ${CLAUDE_PROJECT_DIR} variable used by the plugin build, which the desktop host does not expand — asking you for the path is the only way this host can know it.",
+      "required": true
+    },
+    "node_path": {
+      "type": "string",
+      "title": "Node binary path (optional)",
+      "description": "Absolute path to a Node 18+ binary. Leave blank unless the bundled runtime fails; the server reports the runtime it actually resolved via omatic_runtime_status.",
+      "required": false,
+      "default": ""
+    }
+  },
+  "compatibility": {
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}
