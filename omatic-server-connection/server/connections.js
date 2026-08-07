@@ -150,6 +150,34 @@ function sslOptionsForMode(mode, ca = null) {
   }
 }
 
+// Turn a raw connect failure into an actionable message. 3.4.0 flipped the
+// default ssl_mode to verify-full (fails closed), so the most common new failure
+// is a connection with no ssl_mode set, hitting a server whose certificate does
+// not verify — and the raw Node error ("unable to verify the first certificate",
+// "Hostname/IP does not match certificate's altnames") never mentions ssl_mode
+// or how to fix it. This names the configured mode, whether it was defaulted,
+// and the concrete fixes. Non-TLS failures (bad host, refused, auth) pass
+// through untouched.
+function annotateConnectError(cfg, mode, err) {
+  const raw = errMessage(err);
+  const verifying = mode === "verify-full" || mode === "verify-ca";
+  const looksTls = /ssl|tls|certificate|self.signed|altname|handshake|verify|ERR_TLS/i.test(raw);
+  if (!verifying && !looksTls) return raw;
+
+  let msg = `Connection "${cfg.name}" failed with ssl_mode="${mode}"`;
+  if (cfg.sslModeDefaulted) msg += ` (defaulted — no ssl_mode set on this connection)`;
+  msg += `: ${raw}.`;
+  if (verifying) {
+    msg +=
+      ` ssl_mode="${mode}" requires TLS and verification of the server's certificate` +
+      `${mode === "verify-full" ? " chain and hostname" : " chain"}. Fix one of:` +
+      ` (a) set an explicit ssl_mode in .omatic/factory.json — "require" encrypts` +
+      ` without verifying, "disable" is plaintext; (b) set ssl_root_cert to the` +
+      ` server's CA bundle; or (c) present a certificate that matches the host.`;
+  }
+  return msg;
+}
+
 // The ordered negotiation plan for a mode. Each attempt is { kind, ssl }.
 function sslAttemptsFor(mode, ca = null) {
   const plaintext = { kind: "plaintext", ssl: false };
@@ -756,10 +784,15 @@ function parseConnectionEntry(entry, fallbackName) {
   if (url) return { ...parseDatabaseUrl(url, name), name: sanitizeName(name) };
 
   if (entry.host && entry.database && entry.user) {
-    // D5/D6. No host-derived inference. An absent ssl_mode means the libpq
-    // default (prefer), which negotiates TLS and falls back to plaintext.
+    // D5/D6. No host-derived inference. An absent ssl_mode falls back to
+    // DEFAULT_SSL_MODE (verify-full) and FAILS CLOSED: a server without a
+    // verifiable certificate is refused, not silently downgraded to plaintext.
+    // Track whether the mode was defaulted so a connect failure can tell the
+    // operator the refusal came from an unset ssl_mode, not a choice they made.
+    const sslModeRaw = entry.ssl_mode || entry.sslMode;
+    const sslModeDefaulted = !sslModeRaw;
     const sslMode = assertValidSslMode(
-      normalizeSslMode(entry.ssl_mode || entry.sslMode),
+      normalizeSslMode(sslModeRaw),
       `Connection "${name}"`
     );
     const sslRootCert = entry.ssl_root_cert || entry.sslRootCert || null;
@@ -777,6 +810,7 @@ function parseConnectionEntry(entry, fallbackName) {
       user: String(entry.user),
       password: String(entry.password || ""),
       sslMode,
+      sslModeDefaulted,
       permission,
       ...(sslRootCert ? { sslRootCert: String(sslRootCert) } : {}),
     };
@@ -1047,7 +1081,7 @@ async function negotiate(cfg, poolExtra, onConnected) {
       if (retryable) continue;
       return {
         ok: false,
-        error: errMessage(err),
+        error: annotateConnectError(cfg, mode, err),
         attempts,
         ssl: { configured: mode, negotiated: null, encrypted: null },
       };
@@ -1074,7 +1108,9 @@ async function negotiate(cfg, poolExtra, onConnected) {
 
   return {
     ok: false,
-    error: lastError ? errMessage(lastError) : "no connection attempt was made",
+    error: lastError
+      ? annotateConnectError(cfg, mode, lastError)
+      : "no connection attempt was made",
     attempts,
     ssl: { configured: mode, negotiated: null, encrypted: null },
   };
