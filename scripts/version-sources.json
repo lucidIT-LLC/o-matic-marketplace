@@ -55,6 +55,12 @@
           "path": "omatic-server-connection/server/index.js",
           "pattern": "PLUGIN_VERSION\\s*=\\s*[\"']([^\"']+)[\"']",
           "label": "runtime PLUGIN_VERSION (server/index.js)"
+        },
+        {
+          "type": "json",
+          "path": "omatic-server-connection/manifest.json",
+          "field": "version",
+          "label": "mcpb manifest.json"
         }
       ]
     },

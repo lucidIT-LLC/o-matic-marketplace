@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.5.1 — 2026-08-07
+
+- plugin.json `mcpServers` returns to `command: "node"` with a direct `server/index.js` entry. The `/bin/sh` + `bin/omatic-launch.sh` form (introduced in 3.3.0 for #143) is refused by the claude.ai marketplace ingest, which silently keeps the last accepted bundle — Claude Desktop/Cowork was pinned at 3.2.0 while 3.3.0–3.5.0 shipped. Hosts that consume plugin.json manage their own Node runtime, so the bare interpreter name is resolvable there; the shell launcher and degraded advisory server remain in `bin/` and continue to back the `.mcpb` (`manifest.json`) path, where the GUI-PATH defect (KB-0418 defect A) actually lives.
+- `manifest.json` version was stranded at 3.3.0 — now aligned and added to `scripts/version-sources.json` so the rule #287 gate sees it.
+
 ## 3.4.1 - 2026-08-07
 
 Follow-up to 3.4.0's TLS change. Makes a stale install visible and a failed TLS
