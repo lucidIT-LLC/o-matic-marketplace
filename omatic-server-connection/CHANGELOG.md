@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.4.1 - 2026-08-07
+
+Follow-up to 3.4.0's TLS change. Makes a stale install visible and a failed TLS
+connection actionable — the two ways 3.4.0 could look "not working" without
+saying why.
+
+### Added
+- **Running-version visibility.** The startup packet (`omatic_factory_startup_run`)
+  and `omatic_usage_guide` now report a `plugin` block: the version this MCP
+  process is actually running, and — best-effort on Claude Code — whether a newer
+  version is installed on disk and pending a host restart. The host loads an MCP
+  server at process start and never hot-reloads it, so `plugin update` writes the
+  new version to disk while the live session keeps serving the old code. Nothing
+  surfaced this before, so "I updated and nothing changed" was indistinguishable
+  from a no-op. `restart_pending: true` names the gap and says to fully restart.
+
+### Changed
+- **`verify-full` connection failures are now actionable.** When a connect fails
+  under a verifying `ssl_mode` (the 3.4.0 default), the error names the mode,
+  flags when the mode was *defaulted* (no `ssl_mode` set on the connection), and
+  lists the concrete fixes — set an explicit `ssl_mode`, point `ssl_root_cert` at
+  a CA bundle, or present a matching certificate — instead of surfacing a bare
+  `unable to verify the first certificate`. Non-TLS failures pass through
+  unchanged.
+
+### Fixed
+- **Runtime version no longer drifts.** `server/index.js` carried a hardcoded
+  `PLUGIN_VERSION` literal that had to be bumped by hand; it is now a
+  version-align-gated source (rule #287) so CI fails if it disagrees with the
+  canonical catalog.
+- Corrected a stale comment in `connections.js` that still described an absent
+  `ssl_mode` as defaulting to libpq `prefer`; it defaults to `verify-full` and
+  fails closed.
+
+### Not a bug
+- The codex-flavored root `.mcp.json` (`OMATIC_PLATFORM=codex`, `${CODEX_WORKSPACE}`)
+  is the Codex plugin's config, referenced by `.codex-plugin/plugin.json`; Claude
+  Code uses the inline `.claude-plugin/plugin.json`. Both are correct — left as-is.
+
 ## 3.4.0 - 2026-08-07
 
 Two connection-correctness fixes, found while migrating the O-Matic factory

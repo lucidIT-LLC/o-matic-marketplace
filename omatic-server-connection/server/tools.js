@@ -22,6 +22,68 @@ const {
 // entry — the string cannot drift again.
 const GUIDE_VERSION = require("./package.json").version;
 
+const fs = require("node:fs");
+const path = require("node:path");
+const os = require("node:os");
+
+// #— Running-version visibility. Claude Code (and Codex) load an MCP server at
+// process start and never hot-reload it: `plugin update` writes the new version
+// to disk, prints "restart to apply", and the LIVE session keeps serving the old
+// code. Nothing surfaced the running version, so "I updated and nothing changed"
+// was indistinguishable from a no-op. GUIDE_VERSION is the version THIS process
+// is actually running. describePluginVersion() also makes a best-effort read of
+// the host's installed record — if a newer version is installed on disk than the
+// one answering right now, a restart is pending. It never throws: an unknown
+// host just yields installed=null and no false alarm.
+function compareSemver(a, b) {
+  const pa = String(a).split(".").map((n) => Number.parseInt(n, 10));
+  const pb = String(b).split(".").map((n) => Number.parseInt(n, 10));
+  for (let i = 0; i < 3; i++) {
+    const x = pa[i] || 0;
+    const y = pb[i] || 0;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+function readInstalledVersion(env) {
+  // Claude Code records installs in ~/.claude/plugins/installed_plugins.json.
+  // Other hosts have no standard registry we can trust — return null quietly.
+  try {
+    const home = env.HOME || os.homedir();
+    if (!home) return null;
+    const registry = path.join(home, ".claude", "plugins", "installed_plugins.json");
+    const data = JSON.parse(fs.readFileSync(registry, "utf8"));
+    const plugins = data && data.plugins ? data.plugins : {};
+    for (const [key, entries] of Object.entries(plugins)) {
+      if (!key.startsWith("omatic-server-connection@")) continue;
+      const first = Array.isArray(entries) ? entries[0] : entries;
+      if (first && first.version) return String(first.version);
+    }
+  } catch (_) {
+    // Registry absent/unreadable/foreign-host — not an error, just unknown.
+  }
+  return null;
+}
+
+function describePluginVersion(env = process.env) {
+  const running = GUIDE_VERSION;
+  const installed = readInstalledVersion(env);
+  const restartPending =
+    installed != null && compareSemver(running, installed) < 0;
+  return {
+    running,
+    installed,
+    restart_pending: restartPending,
+    note: restartPending
+      ? `A newer version (${installed}) is installed on disk but this session is still running ${running}. ` +
+        `Fully restart the host (quit and reopen — a new conversation is not enough) to load ${installed}.`
+      : installed && compareSemver(running, installed) > 0
+        ? `This session is running ${running}, ahead of the installed record (${installed}).`
+        : `Running ${running}.`,
+  };
+}
+
 // #143 — rule #284 requires a compatibility tier and nothing verified it. The
 // check has to distinguish two facts that a declared tier conflates: which
 // hosts we claim to support, and whether the runtime under THIS process
@@ -1842,6 +1904,9 @@ async function handleUsageGuide(connections, args = {}, explicitConnection = nul
     connector: "omatic-server-connection",
     server_name: "O-Matic Server Connection",
     version: GUIDE_VERSION,
+    // Same version signal as the startup packet: what is running now, and
+    // whether a newer install is pending a restart.
+    plugin: describePluginVersion(),
     factory: redactFactory(project),
     active_connection: activeName,
     pinned_connection: explicitConnection,
@@ -2455,6 +2520,9 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
 
   return successResponse({
     view: startupViewForMode(payload),
+    // Running version of this MCP server, and whether a newer one is installed
+    // on disk waiting for a host restart. First thing a session sees at startup.
+    plugin: describePluginVersion(),
     ...payload,
   });
 }
