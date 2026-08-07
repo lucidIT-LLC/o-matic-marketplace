@@ -9,6 +9,7 @@ const {
   sanitizeName,
   NAME_PATTERN,
   VALID_SSL_MODES,
+  DEFAULT_SSL_MODE,
   VALID_PERMISSIONS,
   DEFAULT_PERMISSION,
   normalizePermission,
@@ -1522,7 +1523,7 @@ function buildToolList(connections) {
           ssl_mode: {
             type: "string",
             description:
-              "SSL mode: disable, require, verify-ca, verify-full. Defaults to require. Never inferred from the host address — state it explicitly when the target needs something other than require.",
+              "SSL mode. Defaults to verify-full and is never inferred from the host address. verify-full encrypts, validates the certificate chain, and checks the hostname — the hostname check is what stops an in-path impersonator. verify-ca validates the chain but not the hostname. require encrypts and validates NOTHING, so it stops passive capture and does not stop impersonation. prefer and allow are accepted for compatibility and silently fall back to plaintext, so a connection using them cannot be attested to in an audit. disable is plaintext only.",
           },
           permission: {
             type: "string",
@@ -1579,7 +1580,7 @@ function buildToolList(connections) {
           ssl_mode: {
             type: "string",
             description:
-              "SSL mode: disable, require, verify-ca, verify-full. Defaults to require. Accepted as sslmode too. Never inferred from the host address.",
+              "SSL mode. Defaults to verify-full, accepted as sslmode too, and never inferred from the host address. verify-full encrypts, validates the chain and checks the hostname. verify-ca skips the hostname check. require encrypts and validates nothing. prefer and allow silently fall back to plaintext. disable is plaintext only. Test a weaker mode deliberately if you are diagnosing one — the response reports the TLS actually negotiated, which is the field that matters.",
           },
           sslmode: { type: "string", description: "libpq spelling of ssl_mode. Either is accepted." },
         },
@@ -1601,7 +1602,8 @@ function buildToolList(connections) {
           password: { type: "string", description: "New database password." },
           ssl_mode: {
             type: "string",
-            description: "New SSL mode: disable, require, verify-ca, verify-full.",
+            description:
+              "New SSL mode. verify-full is the standard (KB-0051 §9): encrypts, validates the chain, checks the hostname. verify-ca skips the hostname check. require encrypts and validates nothing, so it does not stop server impersonation. prefer and allow silently fall back to plaintext. disable is plaintext only. The edit is test-connected before it is written, so a mode the server cannot satisfy fails without changing the file.",
           },
           sslmode: { type: "string", description: "libpq spelling of ssl_mode. Either is accepted." },
           permission: {
@@ -1746,6 +1748,35 @@ async function optionalQuery(connections, sql, params = [], explicitConnection =
     currentOutcome().recordQueryFailure(sql, err, explicitConnection);
     return { ok: false, error: err && err.message ? err.message : String(err) };
   }
+}
+
+// The embedding credential ALWAYS comes from the ACTIVE factory, never from the
+// connection being queried. This is the O-Matic decision #230 contract: the
+// SESSION supplies the query vector and the target database never needs a
+// credential of its own, because fn_search_semantic / fn_search_documents take
+// p_query_vector as a parameter.
+//
+// Both call sites used to pass explicitConnection, so a PINNED query went
+// looking for factory_config inside the TARGET. factory_commons has no
+// factory_config by design — #230 explicitly REJECTED putting a live OpenAI
+// credential in a database that every factory reads through its kb connection,
+// because that would grant key access to every tenant including client and
+// personal factories, and create N copies to rotate.
+//
+// The effect of the bug was not an error. Every natural-language query against
+// commons fell back to FTS-only and returned vec_distance=1 on every hit, so
+// commons reported healthy while being semantically blind — the failure mode
+// behind O-Matic task #138. tenantId is already project.factory_id (the active
+// factory), so only the connection argument was ever wrong.
+async function embeddingCredentialRows(connections, tenantId) {
+  return optionalQuery(
+    connections,
+    `SELECT key, value, notes, updated_at
+       FROM factory_config
+      WHERE tenant_id = $1 AND category = 'embedding'
+      ORDER BY key`,
+    [tenantId]
+  );
 }
 
 // A7, applied to the other schema-filtered probe in this file. This asked
@@ -2352,15 +2383,8 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
   let brainVector = null;
   let brainMode = "fts_with_null_vector";
   try {
-    const embCfg = await optionalQuery(
-      connections,
-      `SELECT key, value, notes, updated_at
-         FROM factory_config
-        WHERE tenant_id = $1 AND category = 'embedding'
-        ORDER BY key`,
-      [tenantId],
-      explicitConnection
-    );
+    // Active factory, never the pinned target — see embeddingCredentialRows.
+    const embCfg = await embeddingCredentialRows(connections, tenantId);
     const embSettings = embeddingSettingsFromRows(embCfg.ok ? embCfg.rows : [], connections.env());
     const embGen = await createQueryEmbedding({ query: brainQuery, settings: embSettings });
     if (embGen.ok) {
@@ -2467,16 +2491,8 @@ async function handleSearchMemory(connections, args, explicitConnection = null) 
         fallback_reason: null,
       };
     } else if (mode !== "fts") {
-      const config = await optionalQuery(
-        connections,
-        `SELECT key, value, notes, updated_at
-         FROM factory_config
-         WHERE tenant_id = $1
-           AND category = 'embedding'
-         ORDER BY key`,
-        [tenantId],
-        explicitConnection
-      );
+      // Active factory, never the pinned target — see embeddingCredentialRows.
+      const config = await embeddingCredentialRows(connections, tenantId);
       const settings = embeddingSettingsFromRows(config.ok ? config.rows : [], connections.env(), args.embedding_model);
       const generated = await createQueryEmbedding({ query: args.query, settings });
       if (generated.ok) {
@@ -3238,7 +3254,14 @@ function buildConnEntryFromArgs(args) {
     // who can pick the host can pick the security level, and the same 100.64/10
     // range is routable by anyone. The operator states the mode or takes the
     // secure default; a wrong default fails loudly at the connection test.
-    const sslMode = String(args.ssl_mode || "require").toLowerCase();
+    //
+    // The default was a second hardcoded "require" literal that disagreed with
+    // DEFAULT_SSL_MODE, so the documented default and the actual one differed
+    // depending on which path built the connection. It now reads the single
+    // source of truth, which is verify-full (KB-0051 v1.9.0 §9). `require`
+    // encrypts without validating anything, so it never was the secure default
+    // this comment claimed it to be.
+    const sslMode = String(args.ssl_mode || DEFAULT_SSL_MODE).toLowerCase();
     if (!VALID_SSL_MODES.has(sslMode)) {
       throw new Error(`Invalid ssl_mode "${sslMode}". Allowed: ${[...VALID_SSL_MODES].join(", ")}.`);
     }

@@ -1,5 +1,68 @@
 # Changelog
 
+## 3.4.0 - 2026-08-07
+
+Two connection-correctness fixes, found while migrating the O-Matic factory
+database to TLS. 4.0 is reserved for the on-device embedding migration.
+
+### Changed
+- **`ssl_mode` now defaults to `verify-full`, not `prefer`.** The documented
+  default and the real one disagreed: three tool descriptions advertised
+  "Defaults to require" while `connections.js` read
+  `const DEFAULT_SSL_MODE = "prefer"`, and `sslAttemptsFor("prefer")` returns
+  `[encrypted, plaintext]` — TLS first, **silent fallback to plaintext**. A
+  connection that cannot say which one it used cannot be attested to in an
+  audit, which is the same class of defect as the unfalsifiable success this
+  connector was rebuilt to remove (decision #226): it reports a working
+  connection while quietly delivering less than was asked for.
+
+  A **fourth** hardcoded default lived in `tools.js`
+  (`String(args.ssl_mode || "require")`), so which default applied depended on
+  which code path built the connection. Its own comment called `require` "the
+  secure default" — `require` encrypts and validates *nothing*, so it stops
+  passive capture and does not stop server impersonation. `tools.js` now imports
+  `DEFAULT_SSL_MODE`; there is one source of truth.
+
+  This **fails closed**: a connection entry with no `ssl_mode` against a server
+  with no TLS now fails instead of silently running plaintext. Only entries with
+  an **absent** `ssl_mode` change behavior — every explicit mode is honored
+  unchanged, so no existing factory breaks on upgrade. Required by Blueprint
+  KB-0051 v1.9.0 §9, and free in practice: factory databases sit behind a
+  publicly-trusted certificate, so `verify-full` needs no private CA, no root
+  distribution and no pinning.
+
+  All three `ssl_mode` descriptions were rewritten. They listed only
+  `disable, require, verify-ca, verify-full` while `VALID_SSL_MODES` also
+  accepts `allow` and `prefer` — the two silent-downgrade modes were
+  undocumented but reachable.
+
+### Fixed
+- **The embedding credential is read from the active factory, never from the
+  pinned connection.** Both sites that generate a query embedding —
+  `omatic_search_memory` and the `omatic_factory_startup_run` brain-warm —
+  passed `explicitConnection` to the `factory_config` lookup, so a **pinned**
+  query went hunting for `factory_config` inside the *target* database.
+
+  `factory_commons` has no `factory_config` **by design**: O-Matic decision #230
+  explicitly rejected putting a live OpenAI credential in a database that every
+  factory reads through its `kb` connection, because that grants key access to
+  every tenant including client and personal factories, and creates N copies to
+  rotate. The contract it adopted instead is that the **session supplies the
+  query vector** — `fn_search_semantic` / `fn_search_documents` take
+  `p_query_vector` as a parameter, so the target never needs a credential at all.
+
+  The effect was not an error. Every natural-language query against commons fell
+  back to FTS-only and returned `vec_distance = 1` on every hit, so commons
+  reported healthy while being **semantically blind** — the failure behind
+  O-Matic task #138, open since 2026-08-02. `tenantId` was already
+  `project.factory_id` (the active factory), so only the connection argument was
+  ever wrong. Both sites now route through one `embeddingCredentialRows()`
+  helper that takes no connection argument, so they cannot drift apart again.
+
+  `omatic_embedding_status` deliberately still reads the **target**: "this
+  database has no `factory_config`" is a true fact about that database and the
+  diagnostic should report it.
+
 ## 3.3.0 - 2026-08-04
 
 ### Added

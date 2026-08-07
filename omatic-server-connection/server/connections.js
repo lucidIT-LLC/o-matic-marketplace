@@ -8,8 +8,23 @@ const { Pool } = require("pg");
 // explicit TLS option object plus a negotiation plan.
 const VALID_SSL_MODES = new Set(["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]);
 
-// libpq's default when sslmode is absent. Try TLS, fall back to plaintext.
-const DEFAULT_SSL_MODE = "prefer";
+// The default when sslmode is absent. This is DELIBERATELY NOT libpq's default.
+//
+// libpq defaults to `prefer`, which tries TLS and silently falls back to
+// plaintext. A connection that cannot say which one it used cannot be attested
+// to in an audit, and a silent downgrade is the same class of defect as the
+// unfalsifiable success this connector was rebuilt to remove (decision #226):
+// it reports a working connection while quietly delivering less than asked.
+//
+// `verify-full` is the O-Matic Blueprint requirement (KB-0051 v1.9.0 §9). It is
+// also now free: factory databases sit behind a Tailscale service carrying a
+// publicly-trusted certificate, so the chain validates against the roots every
+// client already has — no private CA, no root distribution, no pinning.
+//
+// This fails CLOSED. A connection entry with no ssl_mode against a server with
+// no TLS will now fail instead of silently running plaintext. That is the
+// intended behavior: state the mode explicitly if you mean something weaker.
+const DEFAULT_SSL_MODE = "verify-full";
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
