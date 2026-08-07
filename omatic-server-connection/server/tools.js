@@ -592,10 +592,17 @@ const VIEW_COLUMNS = {
   // SELECT * FROM v_embedding_health
   embedding: ["stale", "unembedded"],
   // SELECT * FROM v_startup_summary
+  //
+  // #165: `p1_total` is the queue depth as the DATABASE counts it. The renderer
+  // used to derive "...and N more P1 tasks" from p1_tasks.length, which forced
+  // the view to ship all 44 rows to produce one integer and made the array
+  // impossible to trim without silently corrupting the overflow line. The count
+  // and the sample are now separate facts, so the sample can shrink.
   summary: [
     "governance_health",
     "sop_index",
     "p1_tasks",
+    "p1_total",
     "open_task_total",
     "open_tasks",
     "resume_notes",
@@ -603,7 +610,19 @@ const VIEW_COLUMNS = {
     "platform",
   ],
   // SELECT * FROM public.v_agent_agreement
-  agreements: ["agent_name", "status_label", "agreement_version"],
+  //
+  // Smith C1 (decision #246): `enforcement_model` and `loaded_rules` are the two
+  // columns that make a broken Agreement VISIBLE. The fast-wake view read none
+  // of the agreement columns at all, so a halt_on_missing agent with zero loaded
+  // rules rendered as GREEN. They are declared here because the fast view now
+  // reads them.
+  agreements: [
+    "agent_name",
+    "status_label",
+    "agreement_version",
+    "enforcement_model",
+    "loaded_rules",
+  ],
   // SELECT id, enforcement, rule FROM v_startup_rules
   rules: ["id", "enforcement", "rule"],
 };
@@ -620,52 +639,142 @@ const VIEW_COLUMNS = {
 // current — so it is reported as unprobed no matter how green the label looks.
 const PROBE_UNTESTED = "untested";
 
-function probeIsMeasured(row) {
+// ── #166 (b): recency, because session identity was never a freshness bound ──
+//
+// Smith's ruling on task #166 (decision #246) reversed the intuition this file
+// was built on. `probeIsMeasured` had NO recency test whatsoever: it asked only
+// whether a probe row carried a probed_at, and session-row identity did all the
+// remaining work of bounding staleness. That bound was accidental and it was
+// about to be removed — factory_sessions rows are stamped session_date =
+// CURRENT_DATE, so the same-day session reuse in handleStartupRun (#166 (a))
+// would have let a connector probed at 09:00, dead since 14:00, still report
+// "measured this session, OK" at 23:00. A fourteen-hour stale green delivered
+// under a label that asserts currency.
+//
+// So freshness becomes EXPLICIT and BOUNDED instead of implicit and unbounded.
+// Fifteen minutes. Outside it a connector is STALE, never OK, and STALE denies
+// GREEN exactly as UNTESTED does. The doctrine "a prior probe is history, not
+// current status" survives intact — history is now labelled with its age rather
+// than silently promoted to a measurement.
+//
+// Three buckets, and stale is NEVER folded into measured:
+//   untested  probed_at IS NULL, or probe_result = 'untested'  -> UNKNOWN
+//   stale     probed, but older than the window                -> STALE
+//   measured  probed inside the window                         -> its label
+const PROBE_FRESH_WINDOW_MS = 15 * 60 * 1000;
+
+// A probe row that carries a real measurement, of any age. This is the old
+// probeIsMeasured, kept as its own predicate because "was ever probed" and
+// "was probed recently enough to believe" are different questions and
+// collapsing them is the bug above.
+function probeIsRecorded(row) {
   const probedAt = viewField("readiness", row, "probed_at", null);
   const result = String(viewField("readiness", row, "probe_result", PROBE_UNTESTED)).toLowerCase();
   return Boolean(probedAt) && result !== PROBE_UNTESTED;
 }
 
-// The only path to "this connector is OK". Both conditions are required:
-// a green label AND a measurement taken this session.
-function probeIsOk(row) {
-  return probeIsMeasured(row) && viewField("readiness", row, "status_label", null) === "OK";
+// Age of the measurement in ms, or null when there is no usable timestamp.
+// An unparseable probed_at is not treated as fresh: null propagates to
+// probeIsMeasured as false, so a malformed timestamp reads STALE rather than OK.
+function probeAgeMs(row, now = Date.now()) {
+  const probedAt = viewField("readiness", row, "probed_at", null);
+  if (!probedAt) return null;
+  const stamp = probedAt instanceof Date ? probedAt.getTime() : new Date(probedAt).getTime();
+  if (!Number.isFinite(stamp)) return null;
+  return Math.max(0, now - stamp);
 }
 
-// What to render for a connector, never folding `untested` into its label.
-function probeState(row) {
-  if (!probeIsMeasured(row)) return "UNTESTED";
+function probeIsMeasured(row, now = Date.now()) {
+  if (!probeIsRecorded(row)) return false;
+  const age = probeAgeMs(row, now);
+  return age !== null && age <= PROBE_FRESH_WINDOW_MS;
+}
+
+// Recorded, but outside the window. Distinct from untested: we DID check, the
+// check is just too old to speak for the present.
+function probeIsStale(row, now = Date.now()) {
+  return probeIsRecorded(row) && !probeIsMeasured(row, now);
+}
+
+// Human age for the view: "4m ago", "2h ago". A measurement the reader cannot
+// date is a measurement the reader cannot judge.
+function formatProbeAge(row, now = Date.now()) {
+  const age = probeAgeMs(row, now);
+  if (age === null) return null;
+  const seconds = Math.round(age / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+// The only path to "this connector is OK". Both conditions are required:
+// a green label AND a measurement inside the freshness window.
+function probeIsOk(row, now = Date.now()) {
+  return probeIsMeasured(row, now) && viewField("readiness", row, "status_label", null) === "OK";
+}
+
+// What to render for a connector, never folding `untested` or `stale` into an
+// OK label.
+function probeState(row, now = Date.now()) {
+  if (!probeIsRecorded(row)) return "UNTESTED";
+  if (!probeIsMeasured(row, now)) return "STALE";
   return viewField("readiness", row, "status_label", null) || viewField("readiness", row, "probe_result", UNKNOWN);
 }
 
 // Session-scoped probe coverage. Returned in the startup packet so a consumer
 // reading JSON rather than the text view sees the same honesty.
-function probeCoverage(readinessRows, readinessOk) {
+function probeCoverage(readinessRows, readinessOk, now = Date.now()) {
   if (!readinessOk) {
     return {
       readable: false,
       total: UNKNOWN,
+      measured: UNKNOWN,
       measured_this_session: UNKNOWN,
+      stale: UNKNOWN,
       untested: UNKNOWN,
+      freshness_window_minutes: PROBE_FRESH_WINDOW_MS / 60000,
+      stale_connectors: [],
       untested_connectors: [],
       note: "Connector readiness could not be read; probe coverage is unknown, not zero.",
     };
   }
-  const untested = readinessRows.filter((row) => !probeIsMeasured(row));
+  // #166 (b): three buckets, and stale never counts toward measured. Folding
+  // them would recreate exactly the defect decision #188 blocked — a verdict
+  // whose age the consumer cannot see, reported as a current measurement.
+  const untested = readinessRows.filter((row) => !probeIsRecorded(row));
+  const stale = readinessRows.filter((row) => probeIsStale(row, now));
+  const measured = readinessRows.filter((row) => probeIsMeasured(row, now));
+  const describe = (row) => ({
+    connector_id: viewField("readiness", row, "connector_id"),
+    criticality: viewField("readiness", row, "criticality", UNKNOWN),
+    // The demoted prior verdict, verbatim. Surfaced as history, never as status.
+    prior_verdict_note: viewField("readiness", row, "probe_note", null),
+  });
   return {
     readable: true,
     total: readinessRows.length,
-    measured_this_session: readinessRows.length - untested.length,
+    measured: measured.length,
+    // Retained under its old name for consumers written against the previous
+    // packet, but it no longer means "this session" — it means "inside the
+    // freshness window", which is the bound that actually holds.
+    measured_this_session: measured.length,
+    stale: stale.length,
     untested: untested.length,
-    untested_connectors: untested.map((row) => ({
-      connector_id: viewField("readiness", row, "connector_id"),
-      criticality: viewField("readiness", row, "criticality", UNKNOWN),
-      // The demoted prior verdict, verbatim. Surfaced as history, never as status.
-      prior_verdict_note: viewField("readiness", row, "probe_note", null),
+    freshness_window_minutes: PROBE_FRESH_WINDOW_MS / 60000,
+    stale_connectors: stale.map((row) => ({
+      ...describe(row),
+      probed_at: viewField("readiness", row, "probed_at", null),
+      age: formatProbeAge(row, now),
     })),
+    untested_connectors: untested.map(describe),
     note:
-      "measured_this_session counts connectors this session actually probed (probed_at IS NOT NULL). " +
-      "Seeded and inherited verdicts are reported as untested — a prior probe is history, not current status.",
+      `measured counts connectors probed within the last ${PROBE_FRESH_WINDOW_MS / 60000} minutes. ` +
+      "stale counts connectors that were genuinely probed but longer ago than that — they are reported " +
+      "separately and never folded into measured. untested counts connectors with no measurement at all " +
+      "(probed_at IS NULL). Neither stale nor untested is an OK: a prior probe is history, not current status.",
   };
 }
 
@@ -709,18 +818,58 @@ function formatCountMap(map) {
     .join(" | ");
 }
 
+// #165 (3): the loaded-skill roster is a PROJECTION of the agreement roster,
+// not an independent fact. Shipping both put the same twelve agents in the
+// packet twice (1,130 B of pure duplication) and created two things that could
+// disagree. It is derived here instead, from the agreements the caller already
+// has, so the roster and the agreements cannot drift apart by construction.
+//
+// Smith (M4, decision #246) confirmed the only consumers are this file's two
+// roster blocks — no SKILL.md reference, and agent routing does not read it.
+const CORE_ROSTER_AGENTS = ["brandy", "carver", "data", "fred", "monet", "probot"];
+
+function deriveLoadedSkills(agreementsResult) {
+  if (!sourceOk(agreementsResult)) return [];
+  return queryRows(agreementsResult)
+    .filter((row) => viewField("agreements", row, "status_label", null) === "READY")
+    .map((row) => {
+      // A12: this read `row.agent_name` directly for the roster test while
+      // reading the same column through viewField two lines up — a contract
+      // that one call site opts out of is not a contract.
+      const agentName = viewField("agreements", row, "agent_name", null);
+      return {
+        agent_name: agentName,
+        agreement_version: viewField("agreements", row, "agreement_version", null),
+        factory_mode:
+          agentName && CORE_ROSTER_AGENTS.includes(agentName)
+            ? "always_on_core_roster"
+            : "loaded_opt_in_lane",
+      };
+    });
+}
+
 function formatStartupView(payload) {
   const startup = payload.startup || {};
   const summary = firstStartupSummary(startup);
   const readiness = queryRows(startup.readiness);
   const agreements = queryRows(startup.agreements);
-  const loadedSkills = Array.isArray(startup.loaded_skills) ? startup.loaded_skills : [];
+  // #165 (3): loaded_skills is no longer carried in the packet. Rebuild it from
+  // the agreements that are, falling back to an explicitly supplied array so a
+  // caller holding an older packet still renders.
+  const loadedSkills = Array.isArray(startup.loaded_skills)
+    ? startup.loaded_skills
+    : deriveLoadedSkills(startup.agreements);
   const embeddingRows = queryRows(startup.embedding);
   const governance = viewField("summary", summary, "governance_health", null) || {};
   const sopIndexRaw = viewField("summary", summary, "sop_index", null);
   const sopIndex = Array.isArray(sopIndexRaw) ? sopIndexRaw : [];
   const p1TasksRaw = viewField("summary", summary, "p1_tasks", null);
   const p1Tasks = Array.isArray(p1TasksRaw) ? p1TasksRaw : [];
+  // #165: queue DEPTH comes from the view's own count, not from the length of
+  // the sample. The old `p1Tasks.length` made the array load-bearing for a
+  // number, which is why the view could not be trimmed. Falls back to the array
+  // length when p1_total is absent, so an older view still renders correctly.
+  const p1Total = asNumber(viewField("summary", summary, "p1_total", p1Tasks.length));
   const session = payload.session || {};
   const identity = payload.identity || {};
   const factory = payload.factory || {};
@@ -738,9 +887,14 @@ function formatStartupView(payload) {
 
   const openTaskTotal = summaryOk ? viewField("summary", summary, "open_task_total", "0") : UNKNOWN;
   const readyAgreements = agreements.filter((row) => viewField("agreements", row, "status_label", null) === "READY").length;
-  // A5: OK requires a measurement taken this session, not just a green label.
-  const connectorOk = readiness.filter(probeIsOk).length;
-  const connectorUntested = readiness.filter((row) => !probeIsMeasured(row)).length;
+  // A5 + #166 (b): OK requires a green label AND a measurement inside the
+  // freshness window. Note the arrow wrappers — passing these predicates bare to
+  // .filter() would hand the array index in as `now`, which would date every
+  // probe to 1970 and report the whole factory stale.
+  const now = Number.isFinite(payload.now) ? payload.now : Date.now();
+  const connectorOk = readiness.filter((row) => probeIsOk(row, now)).length;
+  const connectorUntested = readiness.filter((row) => !probeIsRecorded(row)).length;
+  const connectorStale = readiness.filter((row) => probeIsStale(row, now)).length;
   const connectorTotal = readiness.length;
   const staleEmbedding = embeddingRows.reduce((total, row) => total + asNumber(viewField("embedding", row, "stale", 0)), 0);
   const unembedded = embeddingRows.reduce((total, row) => total + asNumber(viewField("embedding", row, "unembedded", 0)), 0);
@@ -748,28 +902,45 @@ function formatStartupView(payload) {
   const ruleTarget = asNumber(governance.rule_count_target);
   const combinedTarget = asNumber(governance.combined_governance_target);
   const combinedCurrent = asNumber(governance.active_sop_count) + ruleCount;
+  // Smith binding condition 4 (decision #246): a missing, null or zero
+  // rule_count_target used to fall straight through to `OK N rules` — the rule
+  // check produced no finding at all and the factory read green. That was
+  // tolerable only while startup.rules shipped alongside as an independent
+  // corpus view. It no longer does on fast, so governance_health is the sole
+  // rule signal and it must not fail open. No target means the count cannot be
+  // checked against anything: UNKNOWN, never OK.
+  const ruleTargetUnknown = !summaryOk || !ruleTarget;
   const governanceLabel = !summaryOk
     ? `${UNKNOWN} rules`
-    : ruleTarget && ruleCount < ruleTarget
-      ? `WARN ${ruleCount}/${ruleTarget} rules`
-      : `OK ${ruleCount || UNKNOWN} rules`;
+    : !ruleTarget
+      ? `${UNKNOWN} rules (${ruleCount || 0} active, no rule_count_target to verify against)`
+      : ruleCount < ruleTarget
+        ? `WARN ${ruleCount}/${ruleTarget} rules`
+        : `OK ${ruleCount}/${ruleTarget} rules`;
   const combinedLabel = !summaryOk
     ? `${UNKNOWN} combined`
     : combinedTarget && combinedCurrent < combinedTarget
       ? `WARN ${combinedCurrent}/${combinedTarget} combined`
       : `OK ${combinedCurrent || UNKNOWN} combined`;
   const sopLabel = summaryOk ? `${sopIndex.length} active ${plural(sopIndex.length, "SOP")}` : `${UNKNOWN} active SOPs`;
-  // A5: GREEN requires every connector to have been MEASURED OK this session.
-  // An unprobed connector is not evidence of health, so it cannot be counted
-  // toward one.
+  // A5: GREEN requires every connector to have been MEASURED OK, inside the
+  // freshness window. An unprobed connector is not evidence of health, and
+  // neither is a stale one, so neither can be counted toward one.
+  //
+  // Smith condition 4: an unverifiable rule count also denies GREEN. A status
+  // line that says GREEN while a governance signal reads UNKNOWN is the whole
+  // failure class this release exists to close.
   const factoryStatus = !readinessOk
     ? UNKNOWN
-    : connectorOk === connectorTotal && connectorTotal > 0
-      ? "GREEN"
-      : "CHECK";
+    : ruleTargetUnknown
+      ? UNKNOWN
+      : connectorOk === connectorTotal && connectorTotal > 0
+        ? "GREEN"
+        : "CHECK";
   const connectorLabel = readinessOk
     ? `${connectorOk}/${connectorTotal} ${plural(connectorTotal, "connector")} measured OK` +
-      (connectorUntested ? ` | ${connectorUntested} never probed this session` : "")
+      (connectorStale ? ` | ${connectorStale} stale` : "") +
+      (connectorUntested ? ` | ${connectorUntested} never probed` : "")
     : `${UNKNOWN} connectors (readiness query failed)`;
   const skillLabel = agreementsOk
     ? `${readyAgreements}/${agreements.length} ${plural(agreements.length, "skill")} READY`
@@ -833,24 +1004,45 @@ function formatStartupView(payload) {
             // prior verdict as an explicit note, so the reader can see the
             // difference between "we checked and it is down" and "we never
             // checked and it used to be up".
-            const state = probeState(row);
+            //
+            // #166 (b) adds the third case between those two: we DID check, and
+            // the check is too old to speak for now. It renders as STALE with
+            // its age, never as OK.
+            const state = probeState(row, now);
             const connector = viewField("readiness", row, "connector_id");
             if (state === "UNTESTED") {
               const prior = viewField("readiness", row, "probe_note", null);
-              return `WARN ${connector}: UNTESTED (not probed this session)${prior ? ` — ${prior}` : ""}`;
+              return `WARN ${connector}: UNTESTED (never probed)${prior ? ` — ${prior}` : ""}`;
             }
-            return `${statusIcon(state)} ${connector}: ${state}`;
+            if (state === "STALE") {
+              const label = viewField("readiness", row, "status_label", UNKNOWN);
+              return `WARN ${connector}: STALE (last probed ${formatProbeAge(row, now) || "at an unreadable time"}, was ${label})`;
+            }
+            // Age is rendered on every live measurement, not only the bad ones:
+            // a reader who cannot date a green has to take it on faith.
+            const age = formatProbeAge(row, now);
+            return `${statusIcon(state)} ${connector}: ${state}${age ? ` (probed ${age})` : ""}`;
           })
         : ["INFO no connector readiness rows returned"])
   );
 
   // A5: state the measurement gap once, in words, above the per-connector list.
-  if (readinessOk && connectorUntested) {
+  if (readinessOk && (connectorUntested || connectorStale)) {
+    const gaps = [];
+    if (connectorStale) {
+      gaps.push(
+        `${connectorStale} ${plural(connectorStale, "connector")} carry a measurement older than ` +
+          `${PROBE_FRESH_WINDOW_MS / 60000} minutes (STALE — history, not current status)`
+      );
+    }
+    if (connectorUntested) {
+      gaps.push(`${connectorUntested} ${plural(connectorUntested, "connector")} carry no measurement at all (UNTESTED)`);
+    }
     lines.push(
       "",
-      `Probe coverage: ${connectorOk}/${connectorTotal} measured this session. ` +
-        `${connectorUntested} ${plural(connectorUntested, "connector")} carry no current measurement — ` +
-        "their status is unknown, not OK. Run a real probe and record it with omatic_record_probe_result."
+      `Probe coverage: ${connectorOk}/${connectorTotal} measured within the last ` +
+        `${PROBE_FRESH_WINDOW_MS / 60000} minutes. ${gaps.join("; ")}. ` +
+        "Neither is an OK. Run a real probe and record it with omatic_record_probe_result."
     );
   }
 
@@ -859,7 +1051,20 @@ function formatStartupView(payload) {
     for (const task of p1Tasks.slice(0, 8)) {
       lines.push(`#${task.id} ${task.owner || "unowned"} | ${task.category || "uncategorized"} | ${task.title}`);
     }
-    if (p1Tasks.length > 8) lines.push(`...and ${p1Tasks.length - 8} more P1 ${plural(p1Tasks.length - 8, "task")}`);
+    // #165: the overflow count comes from p1_total, so the view is free to send
+    // a sample instead of the whole queue.
+    const shown = Math.min(p1Tasks.length, 8);
+    if (p1Total > shown) lines.push(`...and ${p1Total - shown} more P1 ${plural(p1Total - shown, "task")}`);
+  }
+
+  // #167: the commons and operator-profile loads rules #267 and #319 mandate,
+  // reported here so the orchestrator does not rediscover them by hand.
+  const loadStates = [["Commons", payload.commons], ["Operator profile", payload.operator_profile]].filter(([, s]) => s);
+  if (loadStates.length) {
+    lines.push("", "Required Loads");
+    for (const [label, state] of loadStates) {
+      lines.push(`${state.loaded ? "OK" : "WARN"} ${label}: ${state.detail}`);
+    }
   }
 
   const resumeNotes =
@@ -1059,6 +1264,37 @@ function redactFactory(project) {
   if (out.database_url) out.database_url = "[REDACTED]";
   if (out.databaseUrl) out.databaseUrl = "[REDACTED]";
   return out;
+}
+
+// #165 (4) + Smith binding condition 5 (decision #246): factory.resolution ships
+// a candidate trace — eleven candidates, ten of them rejected as "duplicate of a
+// higher-precedence candidate" — on every SUCCESSFUL startup, 2,522 B of debug
+// output describing a decision nobody is disputing. It is also duplicated
+// verbatim from the omatic_select_factory response one call earlier.
+//
+// Only three keys go: roots_considered, candidates, rejected_pins. `resolved_via`
+// STAYS IN EVERY MODE, along with using_plugin_install_root and the state_*
+// keys, because those are the ones that say whether the factory resolved
+// honestly. Smith A1: omitting the trace cannot hide a broken factory —
+// verifyFactoryContext refuses server-side, before the payload exists, when
+// using_plugin_install_root is true and no explicit path was given, and the
+// CLAUDE.md step-0 verification reads TOP-LEVEL factory keys, which are untouched.
+//
+// The trace comes back in full on audit, and on any run where resolution did not
+// cleanly succeed — the only times anyone actually wants to read it.
+const RESOLUTION_TRACE_KEYS = ["roots_considered", "candidates", "rejected_pins"];
+
+function scopeFactoryForMode(factory, mode) {
+  if (!factory || typeof factory !== "object") return factory;
+  const resolution = factory.resolution;
+  if (!resolution || typeof resolution !== "object") return factory;
+  const resolutionFailed = !resolution.resolved_via || resolution.using_plugin_install_root === true;
+  if (mode === "audit" || resolutionFailed) return factory;
+  const trimmed = { ...resolution };
+  for (const key of RESOLUTION_TRACE_KEYS) delete trimmed[key];
+  trimmed.trace_omitted =
+    "roots_considered, candidates and rejected_pins are omitted on a clean resolution. Run mode=audit for the full trace.";
+  return { ...factory, resolution: trimmed };
 }
 
 function redactConnectionConfig(cfg) {
@@ -1337,7 +1573,7 @@ function buildToolList(connections) {
     tool({
       name: "omatic_factory_startup_run",
       description:
-        "Open and anchor a platform-specific factory startup session, seed connector readiness, record built-in probe results, warm retrieval, and return the scoped startup packet.",
+        "Open and anchor a platform-specific factory startup session, seed connector readiness, record built-in probe results, warm retrieval, and return the scoped startup packet. Supports mode=fast|normal|audit; see the mode parameter.",
       inputSchema: {
         type: "object",
         properties: {
@@ -1385,8 +1621,16 @@ function buildToolList(connections) {
           mode: {
             type: "string",
             enum: ["fast", "normal", "audit"],
+            // Smith Q3 (decision #246): the previous string carried TWO false
+            // clauses, not one. The short-TTL green-check cache does not exist —
+            // it was deferred under decision #188 and this file states "no
+            // caching" — and "audit = bypassing the cache" implied fast and
+            // normal might not have run a fresh check. handleStartup executes
+            // all five queries unconditionally in every mode, so a model reading
+            // the old description was told the precise inversion of the truth:
+            // that a repeat fast start may not have re-run the safety battery.
             description:
-              "Startup intent (Factory 3.0). fast = non-negotiable safety checks + terse red/yellow + resume point, served from a short-TTL green-check cache on repeat starts; normal = full readiness/embedding/governance detail; audit = force a fresh full check, bypassing the cache. Default: normal.",
+              "Startup intent (Factory 3.0, decision #156). Controls REPORTING DEPTH only — the full safety and health battery runs fresh on every call in every mode; nothing is cached, skipped, or inherited between calls. fast = non-negotiable safety checks with a terse red/yellow + resume-point report; normal = full readiness, embedding and governance detail; audit = full detail plus factory resolution and rule/SOP trace. Default: normal.",
             default: "normal",
           },
         },
@@ -1998,13 +2242,40 @@ async function handleStartup(connections, args, explicitConnection = null) {
   if (!verified.ok) return errorResponse(verified.error, verified);
 
   const sessionId = Number.isInteger(args.session_id) ? args.session_id : null;
+  // Smith binding condition 3 (decision #246): the payload trim is a QUERY-LEVEL
+  // PROJECTION, not a post-hoc deletion. `startup.sop_index` never existed as a
+  // payload key — sop_index is a COLUMN of v_startup_summary arriving inside
+  // startup.summary.rows[0] — so "omit it" was either a no-op that still shipped
+  // 9,493 B or a mandate to mutate the protected summary object after the fact.
+  //
+  // Selecting fewer columns drops sop_index and p1_tasks at the database, before
+  // the object exists. startup.summary and startup.agreements are still fetched
+  // FRESH and arrive WHOLE in every mode — decision #188 HIGH-1 — and
+  // sourceOk(startup.summary) keeps its exact meaning because nothing downstream
+  // ever mutates the result. What changes is what was asked for, never what was
+  // checked.
+  const fast = args.mode === "fast";
+  const summarySql = fast
+    ? "SELECT last_session_id, platform, resume_notes, open_task_total, governance_health FROM v_startup_summary"
+    : "SELECT * FROM v_startup_summary";
+  // The plugin's own VIEW_COLUMNS contract declares exactly six readiness
+  // columns as read. SELECT * shipped fifteen. The other nine — session_platform,
+  // display_name, agent_primary, platform_availability, fallback_behavior,
+  // fallback_active and friends — return zero grep hits in this file. Narrowing
+  // the SELECT list needs no view change and carries no dependency risk:
+  // VIEW_COLUMNS asserts what the view EXPOSES, not what the plugin asks for.
+  const READINESS_COLUMNS = VIEW_COLUMNS.readiness.join(", ");
   const readinessSql = sessionId
-    ? "SELECT * FROM v_mcp_readiness_by_session WHERE session_id = $1"
-    : "SELECT * FROM v_mcp_readiness";
+    ? fast
+      ? `SELECT ${READINESS_COLUMNS} FROM v_mcp_readiness_by_session WHERE session_id = $1`
+      : "SELECT * FROM v_mcp_readiness_by_session WHERE session_id = $1"
+    : fast
+      ? `SELECT ${READINESS_COLUMNS} FROM v_mcp_readiness`
+      : "SELECT * FROM v_mcp_readiness";
   const readinessParams = sessionId ? [sessionId] : [];
 
   const [summary, rules, readiness, embedding, agreements] = await Promise.all([
-    optionalQuery(connections, "SELECT * FROM v_startup_summary", [], explicitConnection),
+    optionalQuery(connections, summarySql, [], explicitConnection),
     optionalQuery(
       connections,
       "SELECT id, enforcement, rule FROM v_startup_rules WHERE agent = 'probot' ORDER BY enforcement DESC, id ASC",
@@ -2013,6 +2284,9 @@ async function handleStartup(connections, args, explicitConnection = null) {
     ),
     optionalQuery(connections, readinessSql, readinessParams, explicitConnection),
     optionalQuery(connections, "SELECT * FROM v_embedding_health", [], explicitConnection),
+    // #188 HIGH-1 / Smith C1: never projected, never trimmed, never cached.
+    // enforcement_model and loaded_rules are the halt inputs and every mode
+    // fetches them fresh.
     optionalQuery(connections, "SELECT * FROM public.v_agent_agreement ORDER BY agent_name", [], explicitConnection),
   ]);
 
@@ -2025,23 +2299,45 @@ async function handleStartup(connections, args, explicitConnection = null) {
   // start degraded until real probes are recorded. That is the honest state.
   // A startup that reports `complete` while thirteen connectors carry no
   // measurement is asserting something it did not check — the whole defect.
+  //
+  // #166 (b): stale now degrades the response for the same reason untested
+  // does. A connector last measured nine hours ago is a capability this tool
+  // advertised and did not exercise, however green the row looks.
   const coverage = probeCoverage(queryRows(readiness), sourceOk(readiness));
   if (coverage.readable && coverage.untested > 0) {
     currentOutcome().recordUnavailable(
       "connector_probe_coverage",
-      `${coverage.untested} of ${coverage.total} connectors carry no measurement from this session ` +
+      `${coverage.untested} of ${coverage.total} connectors carry no measurement at all ` +
         `(${coverage.untested_connectors.map((c) => c.connector_id).join(", ")}). ` +
         "Their status is unknown, not OK."
     );
   }
+  if (coverage.readable && coverage.stale > 0) {
+    currentOutcome().recordUnavailable(
+      "connector_probe_recency",
+      `${coverage.stale} of ${coverage.total} connectors were last probed more than ` +
+        `${coverage.freshness_window_minutes} minutes ago ` +
+        `(${coverage.stale_connectors.map((c) => `${c.connector_id} ${c.age}`).join(", ")}). ` +
+        "A prior probe is history, not current status."
+    );
+  }
 
   const payload = {
-    factory: redactFactory(connections.project()),
+    factory: scopeFactoryForMode(redactFactory(connections.project()), args.mode),
     pinned_connection: explicitConnection,
     identity: verified.identity,
     startup: {
+      // #188 HIGH-1, non-negotiable: summary and agreements are fetched fresh
+      // and present in EVERY mode. Never omitted, never cached, never inherited.
+      // They are the halt inputs (loaded_rules=0, summary.ok=false).
       summary,
-      rules,
+      // #165 (1): the probot rule corpus is reporting detail, not a halt input,
+      // and its only consumer is the unreadable-sources enumeration in the full
+      // view — which the fast view never builds. It is omitted on fast. The
+      // QUERY still runs (above) so a read failure still lands in the envelope's
+      // degraded_reasons, and Smith condition 4 closes the fail-open guard that
+      // made governance_health unsafe as the sole remaining rule signal.
+      ...(fast ? {} : { rules }),
       readiness,
       embedding,
       agreements,
@@ -2049,24 +2345,13 @@ async function handleStartup(connections, args, explicitConnection = null) {
       // text, so a consumer reading JSON gets the same answer a human reading
       // the view does.
       probe_coverage: coverage,
-      loaded_skills: agreements.ok
-        ? agreements.rows
-            .filter((row) => viewField("agreements", row, "status_label", null) === "READY")
-            .map((row) => {
-              // A12: this read `row.agent_name` directly for the roster test
-              // while reading the same column through viewField two lines up —
-              // a contract that one call site opts out of is not a contract.
-              const agentName = viewField("agreements", row, "agent_name", null);
-              return {
-                agent_name: agentName,
-                agreement_version: viewField("agreements", row, "agreement_version", null),
-                factory_mode:
-                  agentName && ["brandy", "carver", "data", "fred", "monet", "probot"].includes(agentName)
-                    ? "always_on_core_roster"
-                    : "loaded_opt_in_lane",
-              };
-            })
-        : [],
+      // #165 (3): loaded_skills was a verbatim re-derivation of rows already
+      // present in `agreements` — 1,130 B of duplication, and two copies of one
+      // fact that could disagree. It is emitted only on audit, where the packet
+      // is meant to be exhaustive; every other mode has the renderer rebuild it
+      // from agreements via deriveLoadedSkills. Smith cleared this (M4): the
+      // only consumers are this file's roster blocks.
+      ...(args.mode === "audit" ? { loaded_skills: deriveLoadedSkills(agreements) } : {}),
       skill_loading_contract:
         "All READY v_agent_agreement skills are startup-loaded. Core roster skills are always on for routing; opt-in critic/coach skills remain opt-in and do not self-activate.",
     },
@@ -2147,9 +2432,58 @@ function formatFastStartupView(payload) {
   const summaryOk = sourceOk(startup.summary);
   const readinessOk = sourceOk(startup.readiness);
   const embeddingOk = sourceOk(startup.embedding);
+  const agreementsOk = sourceOk(startup.agreements);
+  const agreements = queryRows(startup.agreements);
+  const now = Number.isFinite(payload.now) ? payload.now : Date.now();
 
   const unknowns = [];
   const redYellow = [];
+
+  // ── Smith C1 (CRITICAL, decision #246): fast wake could not see a broken
+  // Agreement, and the smoke suite certified that as correct ──
+  //
+  // Everything below this comment is new. Before it, formatFastStartupView
+  // contained ZERO references to startup.agreements: it read summary, readiness,
+  // embedding, session, identity and factory, and computed its GREEN verdict
+  // from `unknowns.concat(redYellow)` — neither of which was ever fed an
+  // agreement row. The agreements block was faithfully present in the JSON
+  // payload and completely absent from the text a human reads, so a factory with
+  // twelve halt_on_missing agents and zero loaded rules printed
+  // "Status: GREEN — no red/yellow items."
+  //
+  // The smoke suite's green fixture declared `agreements: { ok: true, rows: [] }`
+  // — an EMPTY roster — and asserted /Status: GREEN/. The test did not miss the
+  // bug; it pinned it.
+  //
+  // Three distinct failures, each of which must deny GREEN:
+  //   unreadable roster  -> UNKNOWN, we cannot say
+  //   empty roster       -> UNKNOWN, nothing was verified (the fixture's case)
+  //   broken agreement   -> RED, named, for any halt_on_missing agent with
+  //                         zero loaded rules or a status other than READY
+  if (!agreementsOk) {
+    unknowns.push(`${UNKNOWN}: agent agreements unreadable — ${sourceError(startup.agreements)}`);
+  } else if (agreements.length === 0) {
+    unknowns.push(
+      `${UNKNOWN}: agent agreement roster is EMPTY — no Agreement was verified, so no agent is known to be loaded`
+    );
+  } else {
+    for (const row of agreements) {
+      const agent = viewField("agreements", row, "agent_name", UNKNOWN);
+      const status = viewField("agreements", row, "status_label", null);
+      const enforcement = viewField("agreements", row, "enforcement_model", null);
+      const loadedRules = asNumber(viewField("agreements", row, "loaded_rules", 0));
+      if (enforcement !== "halt_on_missing") continue;
+      if (loadedRules === 0) {
+        redYellow.push(
+          `RED: agreement ${agent} is halt_on_missing with 0 loaded rules — this is a startup HALT condition`
+        );
+      } else if (status !== "READY") {
+        redYellow.push(
+          `RED: agreement ${agent} is halt_on_missing and status is ${status || UNKNOWN}, not READY — this is a startup HALT condition`
+        );
+      }
+    }
+  }
 
   if (!readinessOk) {
     unknowns.push(`${UNKNOWN}: connector readiness unreadable — ${sourceError(startup.readiness)}`);
@@ -2163,28 +2497,51 @@ function formatFastStartupView(payload) {
     // connectors it never probes. Critical ones are named individually; the
     // rest collapse into one honest line rather than a wall of text nobody
     // reads (a wall of text is its own way of hiding a signal).
-    const untested = readiness.filter((row) => !probeIsMeasured(row));
-    const untestedCritical = untested.filter(
-      (row) => viewField("readiness", row, "criticality", null) === "critical"
-    );
+    const isCritical = (row) => viewField("readiness", row, "criticality", null) === "critical";
+
+    const untested = readiness.filter((row) => !probeIsRecorded(row));
+    const untestedCritical = untested.filter(isCritical);
     const untestedRest = untested.length - untestedCritical.length;
     for (const row of untestedCritical) {
-      unknowns.push(`${UNKNOWN}: CRITICAL connector ${viewField("readiness", row, "connector_id")} not probed this session`);
+      unknowns.push(`${UNKNOWN}: CRITICAL connector ${viewField("readiness", row, "connector_id")} has never been probed`);
     }
     if (untestedRest > 0) {
       unknowns.push(
-        `${UNKNOWN}: ${untestedRest} non-critical ${plural(untestedRest, "connector")} not probed this session`
+        `${UNKNOWN}: ${untestedRest} non-critical ${plural(untestedRest, "connector")} have never been probed`
+      );
+    }
+
+    // #166 (b): STALE is the third bucket and it suppresses GREEN exactly as
+    // UNTESTED does. It is never folded into measured, and the age is always
+    // rendered — a stale verdict presented without its age is precisely the
+    // stale-green decision #188 blocked.
+    const stale = readiness.filter((row) => probeIsStale(row, now));
+    const staleCritical = stale.filter(isCritical);
+    const staleRest = stale.length - staleCritical.length;
+    for (const row of staleCritical) {
+      unknowns.push(
+        `${UNKNOWN}: CRITICAL connector ${viewField("readiness", row, "connector_id")} is STALE ` +
+          `(last probed ${formatProbeAge(row, now) || "at an unreadable time"}, window is ${PROBE_FRESH_WINDOW_MS / 60000}m)`
+      );
+    }
+    if (staleRest > 0) {
+      unknowns.push(
+        `${UNKNOWN}: ${staleRest} non-critical ${plural(staleRest, "connector")} carry a measurement older than ` +
+          `${PROBE_FRESH_WINDOW_MS / 60000}m (STALE, not OK)`
       );
     }
 
     for (const row of readiness) {
-      if (!probeIsMeasured(row)) continue;
+      if (!probeIsMeasured(row, now)) continue;
       // A12: read the column v_mcp_readiness actually exposes. This was
       // `row.connector_name`, which the view has never had, so every degraded
       // connector rendered as "connector ?".
       const label = viewField("readiness", row, "status_label", null);
       if (label && label !== "OK") {
-        redYellow.push(`${label}: connector ${viewField("readiness", row, "connector_id")}`);
+        const age = formatProbeAge(row, now);
+        redYellow.push(
+          `${label}: connector ${viewField("readiness", row, "connector_id")}${age ? ` (probed ${age})` : ""}`
+        );
       }
     }
   }
@@ -2200,9 +2557,31 @@ function formatFastStartupView(payload) {
   if (!summaryOk) {
     unknowns.push(`${UNKNOWN}: startup summary unreadable — ${sourceError(startup.summary)}`);
   } else {
+    // Smith binding condition 4 (decision #246), and the reason it is binding:
+    // this branch used to SKIP ENTIRELY when rule_count_target was missing,
+    // null or zero — no item, no warning, no trace. That was survivable only
+    // while startup.rules travelled alongside as an independent corpus view,
+    // and the two are NOT redundant: governance_health.active_rule_count reads
+    // 59 while v_startup_rules for probot returns 7 rows.
+    //
+    // On fast, startup.rules is now omitted, so governance_health is the SOLE
+    // rule signal. The failure on record: a migration drops or renames the
+    // probot rule scope. v_startup_rules returns 0 rows with ok:true — no query
+    // failure, outcome stays complete. governance_health still reads 59/59 from
+    // the unaffected aggregate. The old code printed GREEN.
+    //
+    // A count with nothing to check it against is UNKNOWN. Never skipped, never
+    // OK.
     const ruleTarget = asNumber(governance.rule_count_target);
     const ruleCount = asNumber(governance.active_rule_count);
-    if (ruleTarget && ruleCount < ruleTarget) redYellow.push(`WARN: governance ${ruleCount}/${ruleTarget} rules`);
+    if (!ruleTarget) {
+      unknowns.push(
+        `${UNKNOWN}: governance rule_count_target is missing or zero — ${ruleCount || 0} active ` +
+          `${plural(ruleCount || 0, "rule")} cannot be verified against a target`
+      );
+    } else if (ruleCount < ruleTarget) {
+      redYellow.push(`WARN: governance ${ruleCount}/${ruleTarget} rules`);
+    }
   }
 
   // A12 follow-through: this read `last_resume_notes` then `last_summary`,
@@ -2218,22 +2597,40 @@ function formatFastStartupView(payload) {
   const openTasks = summaryOk ? viewField("summary", summary, "open_task_total", "0") : UNKNOWN;
 
   const items = unknowns.concat(redYellow);
+  // Smith C1: a broken halt_on_missing Agreement is not one warning among
+  // several. It is the condition Probot is required to HALT on, so it gets the
+  // top line rather than position four in a bulleted list.
+  const halts = redYellow.filter((item) => item.startsWith("RED:"));
   const lines = [];
   lines.push(`O-MATIC FAST WAKE — ${factory.factory_id || factory.name || "factory"} @ ${platform}`);
   lines.push(`db=${dbName} session=${sessionId} mode=${payload.mode || "fast"}`);
-  if (items.length === 0) {
+  if (halts.length) {
+    lines.push(
+      `Status: HALT — ${halts.length} ${plural(halts.length, "Agreement")} in a halt_on_missing state; ${items.length} item(s) need attention:`
+    );
+    for (const item of items) lines.push(`  - ${item}`);
+  } else if (items.length === 0) {
     lines.push("Status: GREEN — no red/yellow items.");
   } else if (unknowns.length) {
     // A5 widened this bucket: an UNKNOWN is now either a source that could not
-    // be read (A17) or a connector that was never measured. Both deny GREEN,
-    // and the wording no longer claims all of them were read failures.
+    // be read (A17), a connector that was never measured, a connector whose
+    // measurement is older than the freshness window (#166 b), or a governance
+    // signal with nothing to check it against (Smith condition 4). All deny
+    // GREEN, and the wording no longer claims all of them were read failures.
     lines.push(
-      `Status: ${UNKNOWN} — ${unknowns.length} ${plural(unknowns.length, "item")} unverified (unreadable source or unprobed connector); ${items.length} item(s) need attention:`
+      `Status: ${UNKNOWN} — ${unknowns.length} ${plural(unknowns.length, "item")} unverified (unreadable source, unprobed or stale connector, or unverifiable governance signal); ${items.length} item(s) need attention:`
     );
     for (const item of items) lines.push(`  - ${item}`);
   } else {
     lines.push(`Status: ${items.length} item(s) need attention:`);
     for (const item of items) lines.push(`  - ${item}`);
+  }
+  // #167: rules #267 and #319 are required startup steps. Reporting them in the
+  // packet but not the view would repeat the C1 mistake — a fact present in the
+  // JSON and absent from what a human reads.
+  for (const [label, state] of [["Commons", payload.commons], ["Operator profile", payload.operator_profile]]) {
+    if (!state) continue;
+    lines.push(`${label}: ${state.loaded ? "loaded" : "NOT LOADED"} — ${state.detail}`);
   }
   lines.push(`Open P1+ tasks: ${openTasks}`);
   lines.push(`Resume: ${resume}`);
@@ -2305,6 +2702,142 @@ function deriveBuiltInPostgresProbe(observed) {
   };
 }
 
+// ── #167: the commons load, done SCHEMA-QUALIFIED ──
+//
+// This is the whole finding, and it is almost certainly the original symptom
+// behind task #138. factory_commons content lives in schema `kb`, while the
+// session search_path is {pg_catalog, public}. An UNQUALIFIED query against
+// public returns ZERO ROWS with success=true and results_trustworthy=true — a
+// silent empty result indistinguishable from "the commons is empty". Probot hit
+// exactly this and had to probe information_schema by hand to find kb.documents
+// (69 rows), kb.document_chunks (484) and kb.semantic_index (63).
+//
+// So the query names the schema, and a zero-row answer is reported as a FAILED
+// load rather than a quiet success (rule #267 as amended by decision #226:
+// resolving the connection is NOT loading).
+const COMMONS_CONNECTION = "kb";
+
+async function loadCommonsState(connections) {
+  if (!connections.has || !connections.has(COMMONS_CONNECTION)) {
+    return {
+      loaded: false,
+      connection: COMMONS_CONNECTION,
+      reason: "connection_not_configured",
+      detail: `No "${COMMONS_CONNECTION}" connection is configured, so factory commons could not be loaded.`,
+      counts: null,
+    };
+  }
+  const result = await optionalQuery(
+    connections,
+    `SELECT (SELECT count(*) FROM kb.documents)       AS documents,
+            (SELECT count(*) FROM kb.document_chunks) AS chunks,
+            (SELECT count(*) FROM kb.semantic_index)  AS semantic_index`,
+    [],
+    COMMONS_CONNECTION
+  );
+  if (!result.ok) {
+    return {
+      loaded: false,
+      connection: COMMONS_CONNECTION,
+      reason: "query_failed",
+      detail: `Factory commons could not be read: ${result.error}`,
+      counts: null,
+    };
+  }
+  const row = (result.rows && result.rows[0]) || {};
+  const counts = {
+    documents: asNumber(row.documents),
+    chunks: asNumber(row.chunks),
+    semantic_index: asNumber(row.semantic_index),
+  };
+  const total = counts.documents + counts.chunks + counts.semantic_index;
+  if (total === 0) {
+    return {
+      loaded: false,
+      connection: COMMONS_CONNECTION,
+      reason: "empty",
+      detail:
+        "kb.documents, kb.document_chunks and kb.semantic_index are all empty. A zero-row commons is a FAILED load, " +
+        "not a quiet success (rule #267, decision #226).",
+      counts,
+    };
+  }
+  return {
+    loaded: true,
+    connection: COMMONS_CONNECTION,
+    reason: null,
+    detail: `Factory commons reachable and populated: ${counts.documents} documents, ${counts.chunks} chunks, ${counts.semantic_index} semantic rows.`,
+    counts,
+    note:
+      "Queried schema-qualified as kb.*. An unqualified query resolves against search_path {pg_catalog,public} " +
+      "and returns zero rows with success=true — a silent empty result that reads exactly like an empty commons.",
+  };
+}
+
+// ── #167: the operator profile, as a DIGEST rather than the whole table ──
+//
+// Rule #319 prescribes a flat SELECT over operator_dimension. Run verbatim that
+// returns ~80 KB across 26 dimensions, which blows the tool-output cap and costs
+// a disk write plus a re-read — one round trip to avoid several, spent every
+// session. The rule is right that it should be one flat query; what belongs in
+// the packet is the INDEX, not the bodies. Names and access_tier only. Bodies
+// stay available on demand over the aboutjimmy connection.
+const OPERATOR_PROFILE_CONNECTION = "aboutjimmy";
+
+async function loadOperatorProfileState(connections) {
+  if (!connections.has || !connections.has(OPERATOR_PROFILE_CONNECTION)) {
+    return {
+      loaded: false,
+      connection: OPERATOR_PROFILE_CONNECTION,
+      reason: "connection_not_configured",
+      detail: `No "${OPERATOR_PROFILE_CONNECTION}" connection is configured, so the operator profile could not be loaded.`,
+      dimensions: [],
+    };
+  }
+  const result = await optionalQuery(
+    connections,
+    `SELECT dimension, access_tier, count(*)::bigint AS rows
+       FROM operator_dimension
+      GROUP BY dimension, access_tier
+      ORDER BY dimension`,
+    [],
+    OPERATOR_PROFILE_CONNECTION
+  );
+  if (!result.ok) {
+    return {
+      loaded: false,
+      connection: OPERATOR_PROFILE_CONNECTION,
+      reason: "query_failed",
+      detail: `Operator profile could not be read: ${result.error}`,
+      dimensions: [],
+    };
+  }
+  const dimensions = (result.rows || []).map((row) => ({
+    dimension: row.dimension,
+    access_tier: row.access_tier,
+    rows: asNumber(row.rows),
+  }));
+  if (dimensions.length === 0) {
+    return {
+      loaded: false,
+      connection: OPERATOR_PROFILE_CONNECTION,
+      reason: "empty",
+      detail: "operator_dimension returned zero rows. An empty profile is a FAILED load, not a quiet success (rule #319).",
+      dimensions,
+    };
+  }
+  return {
+    loaded: true,
+    connection: OPERATOR_PROFILE_CONNECTION,
+    reason: null,
+    detail: `Operator profile index loaded: ${dimensions.length} ${plural(dimensions.length, "dimension")}.`,
+    dimensions,
+    note:
+      "Index only — dimension names, access tiers and row counts. Bodies are NOT carried in the startup packet " +
+      "(the flat SELECT in rule #319 returns ~80 KB); read them on demand over the aboutjimmy connection.",
+  };
+}
+
 async function handleStartupRun(connections, args, explicitConnection = null) {
   const verified = await verifyFactoryContext(connections, explicitConnection);
   if (!verified.ok) return errorResponse(verified.error, verified);
@@ -2321,15 +2854,56 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     `Factory startup anchored to ${platform}; startup runner seeded readiness and warmed retrieval.`;
   const agentsActive = args.agents_active || "probot";
 
-  const sessionResult = await q(
+  // ── #166 (a): SESSION HYGIENE ONLY. This confers no freshness authority. ──
+  //
+  // Every startup_run used to INSERT a fresh factory_sessions row, so rows 137,
+  // 138 and 150 accumulated as "startup session opened by omatic_factory_startup"
+  // with no work recorded against any of them. Worse, probe coverage was scoped
+  // to that brand-new row, so the first startup after probes were recorded
+  // reported "6 of 7 connectors carry no measurement from this session" five
+  // minutes after six probes had been taken. Startup cried wolf on every wake.
+  //
+  // The same-day per-platform row is reused instead. Read the ruling in decision
+  // #246 before touching this: Smith found that reuse ALONE is the dangerous
+  // option, not the conservative one. factory_sessions rows are stamped
+  // session_date = CURRENT_DATE, so a reused row stays valid until midnight, and
+  // probeIsMeasured had no recency test at all — session identity was the only
+  // freshness bound in the entire system. Reuse without #166 (b) would let a
+  // connector probed at 09:00 and dead since 14:00 report "measured this
+  // session, OK" at 23:00.
+  //
+  // So this half does exactly one job — stop minting rows — and the freshness
+  // question is answered by the explicit 15-minute window in probeIsMeasured.
+  // Do not re-couple them.
+  //
+  // Safe against probe loss: fn_seed_session_mcp_status ends in ON CONFLICT
+  // (session_id, connector_id) DO NOTHING, so re-seeding a reused row does NOT
+  // erase probes already recorded against it. It also means the function returns
+  // 0 on a reused session, which is a correct result and NOT a failure — see the
+  // seedValue === 0 regression test pinned in the smoke suite.
+  const existingSession = await q(
     connections,
-    `INSERT INTO factory_sessions
-       (session_date, platform, session_type, summary, resume_notes, agents_active, tenant_id)
-     VALUES (CURRENT_DATE, $1, $2, $3, $4, $5, $6)
-     RETURNING id, session_date, platform, session_type`,
-    [platform, sessionType, summary, resumeNotes, agentsActive, tenantId],
+    `SELECT id, session_date, platform, session_type
+       FROM factory_sessions
+      WHERE tenant_id = $1 AND platform = $2 AND session_date = CURRENT_DATE
+      ORDER BY id DESC
+      LIMIT 1`,
+    [tenantId, platform],
     explicitConnection
   );
+  const reusedSession = existingSession.rows[0] || null;
+
+  const sessionResult = reusedSession
+    ? { rows: [reusedSession] }
+    : await q(
+        connections,
+        `INSERT INTO factory_sessions
+           (session_date, platform, session_type, summary, resume_notes, agents_active, tenant_id)
+         VALUES (CURRENT_DATE, $1, $2, $3, $4, $5, $6)
+         RETURNING id, session_date, platform, session_type`,
+        [platform, sessionType, summary, resumeNotes, agentsActive, tenantId],
+        explicitConnection
+      );
   // A15: the probe below reports on this INSERT, so the INSERT's result has to
   // be inspected rather than assumed. A RETURNING clause that yields no row
   // used to produce a bare TypeError on `session.id`; now it is a stated
@@ -2344,6 +2918,9 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     );
   }
   const sessionId = session.id;
+  // Stated in the packet rather than inferred: a consumer must be able to tell
+  // a fresh anchor from a reused one, and must not read "reused" as "verified".
+  session.reused = Boolean(reusedSession);
 
   // A15: the seed is the other half of the built-in probe's evidence. It runs
   // through optionalQuery so a seed failure degrades the response and the probe
@@ -2500,16 +3077,46 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
   // red/yellow + resume view; normal/audit render the full readiness view.
   const mode = ["fast", "normal", "audit"].includes(args.mode) ? args.mode : "normal";
 
-  const startup = await handleStartup(connections, { session_id: sessionId }, explicitConnection);
+  // Mode reaches handleStartup so the trim happens at the QUERY, not by
+  // deleting keys off a finished object (Smith binding condition 3). Nothing
+  // downstream mutates startup.summary or startup.agreements — the halt inputs
+  // arrive fresh and whole in every mode.
+  const startup = await handleStartup(connections, { session_id: sessionId, mode }, explicitConnection);
   const startupPayload = JSON.parse(startup.content[0].text);
+
+  // #167: rules #267 (load commons) and #319 (load the operator profile) are
+  // REQUIRED startup steps that startup_run never performed or reported, so the
+  // orchestrator rediscovered them by hand on every wake — roughly 8 of ~20
+  // round trips on session 150, repeated from scratch every session because
+  // nothing in the packet carried the answer.
+  const [commons, operatorProfile] = await Promise.all([
+    loadCommonsState(connections),
+    loadOperatorProfileState(connections),
+  ]);
+  // Decision #226 amending rule #267: "loaded" means a trustworthy result was
+  // obtained or degradation was declared. Resolving the connection is NOT
+  // loading, and a zero-row result is a FAILED load, never a quiet success.
+  // Neither load may halt the factory — #267 degrades to local-brain-only and
+  // #319 to operator-profile-unavailable — but both must be DECLARED.
+  if (!commons.loaded) {
+    currentOutcome().recordUnavailable("commons_load", `${commons.detail} Factory degrades to local-brain-only (rule #267).`);
+  }
+  if (!operatorProfile.loaded) {
+    currentOutcome().recordUnavailable(
+      "operator_profile_load",
+      `${operatorProfile.detail} Factory degrades to operator-profile-unavailable (rule #319).`
+    );
+  }
 
   const payload = {
     mode,
-    factory: redactFactory(project),
+    factory: scopeFactoryForMode(redactFactory(project), mode),
     pinned_connection: explicitConnection,
     identity: verified.identity,
     session,
     seeded: seededValue,
+    commons,
+    operator_profile: operatorProfile,
     probe_results: probeResults,
     asserted_probes: assertedProbes,
     brain_warm: brain.ok
@@ -4097,6 +4704,18 @@ module.exports = {
     probeState,
     probeCoverage,
     statusIcon,
+    // #166 (b) — probe recency (decision #246).
+    probeIsRecorded,
+    probeIsStale,
+    probeAgeMs,
+    formatProbeAge,
+    PROBE_FRESH_WINDOW_MS,
+    // #165 — payload scoping (decision #246).
+    scopeFactoryForMode,
+    deriveLoadedSkills,
+    // #167 — required startup loads (rules #267, #319).
+    loadCommonsState,
+    loadOperatorProfileState,
     resolveEmbeddingScope,
     EMBEDDING_TARGET_TABLES,
     SYSTEM_SCHEMAS,

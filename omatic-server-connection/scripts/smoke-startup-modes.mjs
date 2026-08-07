@@ -32,11 +32,44 @@ const {
   probeState,
   probeCoverage,
   statusIcon,
+  // #166 (b) probe recency, #165 payload scoping (decision #246)
+  probeIsRecorded,
+  probeIsStale,
+  probeAgeMs,
+  formatProbeAge,
+  PROBE_FRESH_WINDOW_MS,
+  scopeFactoryForMode,
+  deriveLoadedSkills,
+  loadCommonsState,
+  loadOperatorProfileState,
 } = __test__;
 
 let pass = 0;
 const failures = [];
 const ok = (cond, msg) => (cond ? pass++ : failures.push(msg));
+
+// #166 (b): probe freshness is now a 15-minute window, so a fixture cannot
+// hard-code a timestamp. The old fixtures said "2026-08-02T12:00:00Z", which was
+// "today" the day they were written and is permanently stale now — exactly the
+// class of rot the window exists to expose. Ages are expressed relative to the
+// run instead.
+const minutesAgo = (m) => new Date(Date.now() - m * 60000).toISOString();
+const RECENT = minutesAgo(2); // inside the 15-minute window
+const LONG_AGO = minutesAgo(9 * 60); // the 09:00-probe-read-at-18:00 case Smith described
+
+// A READY roster for every agent the closed factory ships. Smith C1: the green
+// fixture used to be `agreements: { ok: true, rows: [] }` — an EMPTY roster —
+// and the suite asserted GREEN against it. That certified the exact production
+// defect: fast wake printing GREEN while zero Agreements are loaded. A green
+// fixture must describe a factory that is actually green.
+const readyAgreement = (agent, loadedRules = 27) => ({
+  agent_name: agent,
+  status_label: "READY",
+  agreement_version: "2026-02",
+  enforcement_model: "halt_on_missing",
+  loaded_rules: loadedRules,
+});
+const READY_ROSTER = ["brandy", "carver", "data", "fred", "monet", "probot"].map((a) => readyAgreement(a));
 
 // queryResult shape mirrors optionalQuery output: { ok, rows, count }
 const green = {
@@ -55,7 +88,7 @@ const green = {
         status_label: "OK",
         connector_id: "postgres-omatic",
         probe_result: "connected",
-        probed_at: "2026-08-02T12:00:00Z",
+        probed_at: RECENT,
         probe_note: null,
         criticality: "critical",
       },
@@ -70,7 +103,7 @@ const green = {
     // VIEW_COLUMNS contract itself.
     rows: [{ governance_health: { active_rule_count: 40, rule_count_target: 40 }, open_task_total: "3", resume_notes: "resume here" }],
   },
-  agreements: { ok: true, rows: [] },
+  agreements: { ok: true, rows: READY_ROSTER },
   rules: { ok: true, rows: [] },
   loaded_skills: [],
 };
@@ -103,6 +136,127 @@ const wv = formatFastStartupView({
 });
 ok(/need attention/.test(wv), "warn fast view flags attention");
 ok(/DEGRADED: connector postgres-omatic/.test(wv), "warn fast view names degraded connector");
+
+// ── Smith C1 (decision #246): fast wake must be able to SEE a broken Agreement ──
+//
+// This block is the whole reason #165 could not ship first. formatFastStartupView
+// contained zero references to startup.agreements, and the fixture above used to
+// declare an EMPTY roster while this file asserted GREEN against it. The suite
+// was pinning the defect: a factory with no Agreement loaded printed
+// "Status: GREEN — no red/yellow items."
+//
+// Case 1 — halt_on_missing agent with zero loaded rules. The literal halt input
+// from decision #188 (loaded_rules = 0).
+const brokenAgreement = clone(green);
+brokenAgreement.agreements.rows = [
+  readyAgreement("probot", 47),
+  { ...readyAgreement("carver", 0), loaded_rules: 0 },
+];
+const bav = formatFastStartupView({
+  mode: "fast",
+  startup: brokenAgreement,
+  session: { id: 9 },
+  identity: {},
+  factory: {},
+});
+ok(!/Status: GREEN/.test(bav), "C1 a broken Agreement denies GREEN in the fast view");
+ok(/HALT/.test(bav), "C1 the fast view calls a broken halt_on_missing Agreement a HALT");
+ok(/carver/.test(bav), "C1 the fast view NAMES the failing agent");
+ok(!/RED: agreement probot/.test(bav), "C1 the healthy agent is not flagged");
+
+// Case 2 — halt_on_missing agent whose status is not READY, rules loaded or not.
+const notReadyAgreement = clone(green);
+notReadyAgreement.agreements.rows = [readyAgreement("probot", 47), { ...readyAgreement("smith", 26), status_label: "MISSING_RULES" }];
+const nrv = formatFastStartupView({ mode: "fast", startup: notReadyAgreement, session: {}, identity: {}, factory: {} });
+ok(!/Status: GREEN/.test(nrv), "C1 a non-READY halt_on_missing Agreement denies GREEN");
+ok(/smith/.test(nrv), "C1 the non-READY agent is named");
+
+// Case 3 — the original fixture's own shape. An EMPTY roster is not a green
+// factory, it is an unverified one, and it must never read GREEN again.
+const emptyRoster = clone(green);
+emptyRoster.agreements = { ok: true, rows: [] };
+const erv = formatFastStartupView({ mode: "fast", startup: emptyRoster, session: {}, identity: {}, factory: {} });
+ok(!/Status: GREEN/.test(erv), "C1 an EMPTY agreement roster is not GREEN (the fixture that certified the bug)");
+ok(/EMPTY/.test(erv), "C1 the empty roster is stated in words, not silently skipped");
+
+// Case 4 — an unreadable agreement source is UNKNOWN, never GREEN.
+const unreadableAgreements = clone(green);
+unreadableAgreements.agreements = { ok: false, error: "relation v_agent_agreement does not exist" };
+const uav = formatFastStartupView({ mode: "fast", startup: unreadableAgreements, session: {}, identity: {}, factory: {} });
+ok(!/Status: GREEN/.test(uav), "C1 an unreadable agreement roster is not GREEN");
+ok(/agent agreements unreadable/.test(uav), "C1 the unreadable agreement source is named");
+
+// Case 5 — an advisory (non-halt_on_missing) agreement with zero rules is a
+// finding for the full view, not a fast-wake HALT. The condition is specific.
+const advisoryAgreement = clone(green);
+advisoryAgreement.agreements.rows = [
+  readyAgreement("probot", 47),
+  { ...readyAgreement("jake", 0), enforcement_model: "advisory", loaded_rules: 0 },
+];
+const adv = formatFastStartupView({ mode: "fast", startup: advisoryAgreement, session: {}, identity: {}, factory: {} });
+ok(!/HALT/.test(adv), "C1 an advisory agreement with 0 rules is not a HALT");
+
+// ── #166 (b): the 15-minute recency window ──
+//
+// probeIsMeasured had NO recency test at all. Session identity was the only
+// freshness bound in the system, and #166 (a) was about to remove it.
+const staleProbe = clone(green);
+staleProbe.readiness.rows[0].probed_at = LONG_AGO;
+const spv = formatFastStartupView({ mode: "fast", startup: staleProbe, session: {}, identity: {}, factory: {} });
+ok(!/Status: GREEN/.test(spv), "#166b a probe outside the freshness window denies GREEN");
+ok(/STALE/.test(spv), "#166b a stale probe is labelled STALE, never OK");
+ok(/9h ago/.test(spv), "#166b the fast view renders the age of a stale measurement");
+ok(!/OK/.test(spv.split("\n").find((l) => /postgres-omatic/.test(l)) || ""), "#166b a stale connector never renders as OK");
+
+const spFull = formatStartupView({
+  startup: staleProbe,
+  session: { id: 5, platform: "claude-code" },
+  identity: { db_name: "o-matic", db_user: "u" },
+  factory: {},
+});
+ok(!/Factory status: GREEN/.test(spFull), "#166b the full view also refuses GREEN on a stale probe");
+ok(/STALE \(last probed 9h ago, was OK\)/.test(spFull), "#166b the full view renders stale with its age and its prior label");
+
+// The age is rendered on GOOD measurements too — a reader who cannot date a
+// green has to take it on faith.
+ok(/probed \d+m ago/.test(formatStartupView({ startup: green, session: {}, identity: {}, factory: {} })), "#166b a fresh OK renders its age");
+
+// The window boundary, both sides, driven by an injected clock so the test is
+// deterministic rather than dependent on how long the suite takes to run.
+const atEdge = { connector_id: "c", status_label: "OK", probe_result: "connected", probe_note: null, criticality: "critical", probed_at: new Date(1_000_000_000_000).toISOString() };
+ok(probeIsMeasured(atEdge, 1_000_000_000_000 + 15 * 60 * 1000) === true, "#166b exactly 15 minutes old is still measured");
+ok(probeIsMeasured(atEdge, 1_000_000_000_000 + 15 * 60 * 1000 + 1) === false, "#166b one millisecond past the window is not measured");
+ok(probeIsStale(atEdge, 1_000_000_000_000 + 15 * 60 * 1000 + 1) === true, "#166b past the window it is STALE");
+ok(probeIsRecorded(atEdge) === true, "#166b a stale probe is still RECORDED — it was genuinely measured, just not recently");
+ok(PROBE_FRESH_WINDOW_MS === 15 * 60 * 1000, "#166b the window is 15 minutes, as Smith specified");
+
+// probed_at IS NULL still reports UNKNOWN, not STALE. Task #166's third
+// acceptance criterion, preserved verbatim.
+const neverProbedRow = { connector_id: "c", status_label: "OK", probe_result: "untested", probed_at: null, probe_note: null, criticality: "critical" };
+ok(probeIsRecorded(neverProbedRow) === false, "#166b probed_at NULL is not RECORDED");
+ok(probeIsStale(neverProbedRow) === false, "#166b probed_at NULL is UNTESTED, not STALE");
+ok(probeState(neverProbedRow) === "UNTESTED", "#166b probed_at NULL still reports UNTESTED");
+
+// An unparseable timestamp must not read as fresh.
+const badStamp = { ...atEdge, probed_at: "not-a-date" };
+ok(probeIsMeasured(badStamp) === false, "#166b an unparseable probed_at is not a fresh measurement");
+
+// probe_coverage: three buckets, and stale is NEVER folded into measured.
+const coverage3 = probeCoverage(
+  [
+    { connector_id: "fresh", status_label: "OK", probe_result: "connected", probed_at: RECENT, probe_note: null, criticality: "critical" },
+    { connector_id: "old", status_label: "OK", probe_result: "connected", probed_at: LONG_AGO, probe_note: null, criticality: "standard" },
+    { connector_id: "never", status_label: "OK", probe_result: "untested", probed_at: null, probe_note: "prior: connected", criticality: "standard" },
+  ],
+  true
+);
+ok(coverage3.measured === 1, "#166b probe_coverage counts only fresh probes as measured");
+ok(coverage3.stale === 1, "#166b probe_coverage reports stale as its own bucket");
+ok(coverage3.untested === 1, "#166b probe_coverage still reports untested");
+ok(coverage3.measured + coverage3.stale + coverage3.untested === coverage3.total, "#166b the three buckets partition the connector list");
+ok(coverage3.stale_connectors[0].connector_id === "old", "#166b the stale connector is named");
+ok(/ago$/.test(coverage3.stale_connectors[0].age || ""), "#166b the stale connector carries its age");
+ok(coverage3.freshness_window_minutes === 15, "#166b probe_coverage states the window it used");
 
 // mode -> view selection (the runner branch, made testable)
 const base = { startup: green, session: { id: 1, platform: "claude-code" }, identity: { db_name: "o-matic" }, factory: { factory_id: "omatic" } };
@@ -374,6 +528,36 @@ ok(/returned 7/.test(probeGreen.note), "A15 probe note cites the observed seed v
 ok(
   !/database query path verified/.test(probeGreen.note),
   "A15 probe no longer emits the pre-written 'verified' note"
+);
+
+// ── Smith M3 (decision #246): PIN THIS BEFORE ADOPTING SESSION REUSE ──
+//
+// fn_seed_session_mcp_status ends with ON CONFLICT (session_id, connector_id)
+// DO NOTHING and returns GET DIAGNOSTICS ROW_COUNT. On a REUSED session every
+// row conflicts, so it returns 0 — a correct result meaning "already seeded",
+// not a failure. deriveBuiltInPostgresProbe tests
+// `seedValue !== null && seedValue !== undefined`, so 0 passes and the probe
+// stays connected.
+//
+// That is correct today and exactly ONE truthiness refactor — `if (seedValue)`,
+// `seedValue > 0`, `Boolean(seedValue)` — away from making EVERY reused-session
+// startup self-report degraded. #166 (a) makes reuse the common path, so the
+// blast radius went from zero to every second startup of the day. Pinned.
+const probeReusedSession = deriveBuiltInPostgresProbe({ sessionId: 42, seedOk: true, seedValue: 0 });
+ok(
+  probeReusedSession.status === "connected",
+  `M3 seedValue === 0 keeps the probe connected — a reused session seeds nothing and that is success (got ${probeReusedSession.status})`
+);
+ok(/returned 0/.test(probeReusedSession.note), "M3 the probe note reports the observed 0 rather than hiding it");
+// The genuinely absent cases stay degraded, so the test above cannot be
+// satisfied by making the check unconditional.
+ok(
+  deriveBuiltInPostgresProbe({ sessionId: 42, seedOk: true, seedValue: null }).status === "degraded",
+  "M3 a NULL seed value is still degraded — 0 is a measurement, null is not"
+);
+ok(
+  deriveBuiltInPostgresProbe({ sessionId: 42, seedOk: true, seedValue: undefined }).status === "degraded",
+  "M3 an undefined seed value is still degraded"
 );
 
 // Seed errored: the database is reachable, the readiness path is not.
@@ -683,7 +867,7 @@ const startupConnections = {
             connector_id: "postgres-omatic",
             status_label: "OK",
             probe_result: "connected",
-            probed_at: "2026-08-02T12:00:00Z",
+            probed_at: RECENT,
             probe_note: null,
             criticality: "critical",
           },
@@ -691,7 +875,14 @@ const startupConnections = {
         count: 1,
       };
     }
-    if (/v_startup_summary/.test(sql)) return { rows: [{ open_task_total: "1" }], count: 1 };
+    // Smith condition 4: a rule_count_target must be present, or the fast view
+    // correctly refuses to call the factory green. The old fixture supplied no
+    // governance_health at all and the check silently skipped — which is the
+    // defect, not the baseline.
+    if (/v_startup_summary/.test(sql)) {
+      return { rows: [{ open_task_total: "1", governance_health: { active_rule_count: 59, rule_count_target: 59 } }], count: 1 };
+    }
+    if (/v_agent_agreement/.test(sql)) return { rows: READY_ROSTER, count: READY_ROSTER.length };
     return { rows: [], count: 0 };
   },
 };
@@ -828,15 +1019,15 @@ ok(statusIcon("OK") === "OK", "A5 OK still renders OK");
 const mixed = clone(green);
 mixed.readiness.rows.push(clone(untestedRow), clone(inheritedOkRow));
 const mixedView = formatStartupView({ startup: mixed, session: {}, identity: {}, factory: {} });
-ok(/omatic-elementor: UNTESTED \(not probed this session\)/.test(mixedView), "A5 full view names the unprobed connector");
+ok(/omatic-elementor: UNTESTED \(never probed\)/.test(mixedView), "A5 full view names the unprobed connector");
 ok(/filesystem: UNTESTED/.test(mixedView), "A5 full view reports an inherited OK as UNTESTED");
 ok(!/filesystem: OK/.test(mixedView), "A5 full view never renders an unmeasured connector as OK");
 ok(/Prior verdict: connected/.test(mixedView), "A5 the demoted prior verdict is surfaced as history");
 ok(/1\/3 connectors measured OK/.test(mixedView), "A5 only measured connectors count toward the OK tally");
-ok(/2 never probed this session/.test(mixedView), "A5 the unprobed count is stated, not omitted");
+ok(/2 never probed/.test(mixedView), "A5 the unprobed count is stated, not omitted");
 ok(/Factory status: CHECK/.test(mixedView), "A5 unprobed connectors deny a GREEN factory status");
 ok(!/Factory status: GREEN/.test(mixedView), "A5 a partly-unprobed factory is never GREEN");
-ok(/Probe coverage: 1\/3 measured this session/.test(mixedView), "A5 full view states probe coverage in words");
+ok(/Probe coverage: 1\/3 measured within the last 15 minutes/.test(mixedView), "A5 full view states probe coverage in words");
 
 // A fully-measured factory is still allowed to be GREEN — the point is honesty,
 // not pessimism.
@@ -846,7 +1037,7 @@ ok(/Factory status: GREEN/.test(formatStartupView({ startup: green, session: {},
 const mixedFast = formatFastStartupView({ mode: "fast", startup: mixed, session: {}, identity: {}, factory: {} });
 ok(!/Status: GREEN/.test(mixedFast), "A5 fast view is never GREEN with unprobed connectors");
 ok(/Status: UNKNOWN/.test(mixedFast), "A5 fast view reports UNKNOWN when probes are missing");
-ok(/not probed this session/.test(mixedFast), "A5 fast view says why");
+ok(/never been probed/.test(mixedFast), "A5 fast view says why");
 ok(!/could not be read/.test(mixedFast), "A5 fast view no longer miscalls an unprobed connector an unreadable source");
 
 // Critical unprobed connectors are named individually; the rest collapse.
@@ -856,8 +1047,8 @@ for (let i = 0; i < 12; i += 1) {
 }
 manyUntested.readiness.rows.push({ ...clone(untestedRow), connector_id: "postgres-lucidit", criticality: "critical" });
 const manyFast = formatFastStartupView({ mode: "fast", startup: manyUntested, session: {}, identity: {}, factory: {} });
-ok(/CRITICAL connector postgres-lucidit not probed/.test(manyFast), "A5 an unprobed CRITICAL connector is named individually");
-ok(/12 non-critical connectors not probed this session/.test(manyFast), "A5 non-critical unprobed connectors collapse to one line");
+ok(/CRITICAL connector postgres-lucidit has never been probed/.test(manyFast), "A5 an unprobed CRITICAL connector is named individually");
+ok(/12 non-critical connectors have never been probed/.test(manyFast), "A5 non-critical unprobed connectors collapse to one line");
 
 // probe_coverage travels in the packet, not only in the rendered text.
 const coverage = probeCoverage(mixed.readiness.rows, true);
@@ -872,7 +1063,7 @@ const partiallyProbed = {
     if (/v_mcp_readiness/.test(sql)) {
       return {
         rows: [
-          { connector_id: "postgres-omatic", status_label: "OK", probe_result: "connected", probed_at: "2026-08-02T12:00:00Z", probe_note: null, criticality: "critical" },
+          { connector_id: "postgres-omatic", status_label: "OK", probe_result: "connected", probed_at: RECENT, probe_note: null, criticality: "critical" },
           { connector_id: "omatic-elementor", status_label: "DEGRADED", probe_result: "untested", probed_at: null, probe_note: "Not probed this session. Prior verdict: connected as of 2026-06-16", criticality: "standard" },
         ],
         count: 2,
@@ -900,6 +1091,303 @@ ok(partialHealth.health === "DEGRADED", `A5 health check reports DEGRADED when p
 const blindCoverage = probeCoverage([], false);
 ok(blindCoverage.readable === false && blindCoverage.untested === "UNKNOWN", "A5 unreadable readiness yields UNKNOWN coverage, not zero");
 ok(blindCoverage.measured_this_session !== 0, "A5 unreadable readiness never reports 0 measured as if it were a finding");
+ok(blindCoverage.stale === "UNKNOWN", "#166b unreadable readiness reports UNKNOWN stale, not zero stale");
+
+// ══ #165 / #166 — startup payload scoping (decision #246) ══════════════════
+//
+// A mode-aware query recorder. Modes were reporting depth in NAME only:
+// tools.js assembled one identical payload object regardless of mode and swapped
+// only the rendered view string. normal measured 57,243 B and fast 54,881 B —
+// a 4.1% difference — so BOTH modes blew the MCP tool-output cap, every startup
+// was persisted to disk, and the orchestrator spent an extra round trip reading
+// back its own startup packet. Startup could not complete in one call in any
+// mode, by construction.
+const P1_SAMPLE = Array.from({ length: 8 }, (_, i) => ({ id: 100 + i, title: `task ${i}`, category: "plugin", owner: "carver" }));
+function modeConnections(overrides = {}) {
+  const seen = [];
+  return {
+    seen,
+    conn: {
+      ...fakeConnections(),
+      query: async (name, sql, params) => {
+        seen.push(sql);
+        if (/current_database\(\)/.test(sql)) return { rows: [{ db_name: "f_omatic", db_user: "u" }], count: 1 };
+        if (/SELECT id, session_date, platform, session_type\s+FROM factory_sessions/.test(sql)) {
+          return overrides.existingSession ? { rows: [overrides.existingSession], count: 1 } : { rows: [], count: 0 };
+        }
+        if (/INSERT INTO factory_sessions/.test(sql)) {
+          return { rows: [{ id: 4242, session_date: "2026-08-07", platform: "claude-code", session_type: "work" }], count: 1 };
+        }
+        if (/fn_seed_session_mcp_status/.test(sql)) return { rows: [{ seeded: overrides.seeded ?? 5 }], count: 1 };
+        if (/fn_record_probe_result/.test(sql)) return { rows: [{ result: "ok" }], count: 1 };
+        if (/v_mcp_readiness/.test(sql)) {
+          return {
+            rows: [{ connector_id: "postgres-omatic", status_label: "OK", probe_result: "connected", probed_at: RECENT, probe_note: null, criticality: "critical" }],
+            count: 1,
+          };
+        }
+        if (/v_startup_summary/.test(sql)) {
+          // The projection is the point: a fast query asks for five columns and
+          // therefore cannot receive sop_index or p1_tasks. Answering with the
+          // wide row regardless would let the test pass while the plugin still
+          // shipped 17 KB.
+          const wide = {
+            last_session_id: 4242,
+            platform: "claude-code",
+            resume_notes: "pick up #165",
+            open_task_total: "44",
+            governance_health: { active_rule_count: 59, rule_count_target: 59, active_sop_count: 11, combined_governance_target: 70 },
+            sop_index: Array.from({ length: 11 }, (_, i) => ({ sop_id: `SOP-${i}`, title: "t", trigger_phrases: ["a", "b"] })),
+            p1_tasks: P1_SAMPLE,
+            p1_total: 44,
+            open_tasks: { plugin: 44 },
+          };
+          if (/^SELECT last_session_id, platform, resume_notes, open_task_total, governance_health/.test(sql.trim())) {
+            const { sop_index, p1_tasks, p1_total, open_tasks, ...narrow } = wide;
+            return { rows: [narrow], count: 1 };
+          }
+          return { rows: [wide], count: 1 };
+        }
+        if (/v_agent_agreement/.test(sql)) return { rows: READY_ROSTER, count: READY_ROSTER.length };
+        if (/v_startup_rules/.test(sql)) return { rows: [{ id: 1, enforcement: "hard", rule: "x" }], count: 1 };
+        return { rows: [], count: 0 };
+      },
+    },
+  };
+}
+
+const fastRec = modeConnections();
+const fastRun = parse(await handleToolCall(fastRec.conn, "omatic_factory_startup_run", { mode: "fast" }));
+const normalRec = modeConnections();
+const normalRun = parse(await handleToolCall(normalRec.conn, "omatic_factory_startup_run", { mode: "normal" }));
+const auditRec = modeConnections();
+const auditRun = parse(await handleToolCall(auditRec.conn, "omatic_factory_startup_run", { mode: "audit" }));
+
+// Smith binding condition 3 — QUERY-LEVEL projection, not payload deletion.
+// `startup.sop_index` never existed as a payload key: sop_index is a COLUMN of
+// v_startup_summary arriving inside startup.summary.rows[0]. Deleting it after
+// the fact would have meant mutating the protected summary object.
+ok(
+  fastRec.seen.some((s) => /^SELECT last_session_id, platform, resume_notes, open_task_total, governance_health FROM v_startup_summary/.test(s.trim())),
+  "C3 fast projects five columns off v_startup_summary instead of SELECT *"
+);
+ok(!fastRec.seen.some((s) => /SELECT \* FROM v_startup_summary/.test(s)), "C3 fast never issues SELECT * against the summary view");
+ok(normalRec.seen.some((s) => /SELECT \* FROM v_startup_summary/.test(s)), "C3 normal still takes the full summary");
+ok(auditRec.seen.some((s) => /SELECT \* FROM v_startup_summary/.test(s)), "C3 audit still takes the full summary");
+ok(fastRun.startup.summary.rows[0].sop_index === undefined, "C3 sop_index is absent from the fast payload because it was never selected");
+ok(fastRun.startup.summary.rows[0].p1_tasks === undefined, "C3 p1_tasks is absent from the fast payload");
+ok(
+  fastRec.seen.some((s) => /SELECT connector_id, status_label, probe_result, probed_at, probe_note, criticality FROM v_mcp_readiness/.test(s)),
+  "C3 fast narrows readiness to the six columns VIEW_COLUMNS declares are read"
+);
+ok(!fastRec.seen.some((s) => /SELECT \* FROM v_mcp_readiness/.test(s)), "C3 fast does not SELECT * the fifteen-column readiness view");
+
+// #188 HIGH-1 — the halt inputs are fetched FRESH and arrive WHOLE in every
+// mode. This is the clause the 4 KB target was pressuring an engineer to break.
+for (const [label, run] of [["fast", fastRun], ["normal", normalRun], ["audit", auditRun]]) {
+  ok(run.startup.agreements && run.startup.agreements.ok === true, `#188 ${label} carries a fresh agreements block`);
+  ok(run.startup.agreements.rows.length === READY_ROSTER.length, `#188 ${label} carries the WHOLE agreement roster, untrimmed`);
+  ok(run.startup.agreements.rows[0].loaded_rules !== undefined, `#188 ${label} keeps loaded_rules, the halt input`);
+  ok(run.startup.agreements.rows[0].enforcement_model !== undefined, `#188 ${label} keeps enforcement_model`);
+  ok(run.startup.summary && run.startup.summary.ok === true, `#188 ${label} carries a fresh summary block with its ok flag`);
+  ok(run.startup.probe_coverage !== undefined, `#188 ${label} carries probe coverage`);
+}
+
+// #165 (1) — rules is reporting detail, omitted on fast only. The QUERY still
+// runs, so a read failure still reaches the envelope.
+ok(fastRun.startup.rules === undefined, "#165 startup.rules is omitted on fast");
+ok(fastRec.seen.some((s) => /v_startup_rules/.test(s)), "#165 the rules query still RUNS on fast — reporting changed, checking did not");
+ok(normalRun.startup.rules !== undefined, "#165 startup.rules is kept on normal");
+ok(auditRun.startup.rules !== undefined, "#165 startup.rules is kept on audit");
+
+// #165 (3) — loaded_skills was a verbatim duplicate of agreements.
+ok(fastRun.startup.loaded_skills === undefined, "#165 loaded_skills is not duplicated into the fast payload");
+ok(normalRun.startup.loaded_skills === undefined, "#165 loaded_skills is not duplicated into the normal payload either");
+ok(Array.isArray(auditRun.startup.loaded_skills), "#165 audit still returns everything, loaded_skills included");
+// And the roster still renders, because the renderer derives it.
+ok(/Core roster: brandy, carver, data, fred, monet, probot/.test(normalRun.view), "#165 the roster still renders from agreements after the dedupe");
+const derived = deriveLoadedSkills({ ok: true, rows: READY_ROSTER });
+ok(derived.length === READY_ROSTER.length, "#165 deriveLoadedSkills rebuilds one entry per READY agreement");
+ok(derived.every((s) => s.factory_mode === "always_on_core_roster"), "#165 the core roster classification survives the move");
+ok(deriveLoadedSkills({ ok: false }).length === 0, "#165 an unreadable agreement source derives an empty roster, not a fabricated one");
+
+// Smith binding condition 5 — resolved_via stays in EVERY mode; only the
+// candidate trace goes.
+const cleanFactory = {
+  factory_id: "omatic",
+  resolution: {
+    resolved_via: "CLAUDE_PROJECT_DIR",
+    using_plugin_install_root: false,
+    explicit_factory_json_path: "/x/.omatic/factory.json",
+    roots_considered: ["a", "b"],
+    candidates: [{ source: "a" }, { source: "b" }],
+    rejected_pins: [{ why: "duplicate" }],
+    state_durable: true,
+  },
+};
+for (const mode of ["fast", "normal"]) {
+  const scoped = scopeFactoryForMode(cleanFactory, mode);
+  ok(scoped.resolution.resolved_via === "CLAUDE_PROJECT_DIR", `C5 ${mode} keeps resolution.resolved_via`);
+  ok(scoped.resolution.using_plugin_install_root === false, `C5 ${mode} keeps using_plugin_install_root`);
+  ok(scoped.resolution.state_durable === true, `C5 ${mode} keeps the state_* keys`);
+  ok(scoped.resolution.candidates === undefined, `C5 ${mode} drops the candidate trace`);
+  ok(scoped.resolution.roots_considered === undefined, `C5 ${mode} drops roots_considered`);
+  ok(scoped.resolution.rejected_pins === undefined, `C5 ${mode} drops rejected_pins`);
+}
+ok(scopeFactoryForMode(cleanFactory, "audit").resolution.candidates !== undefined, "C5 audit returns the full resolution trace");
+// A resolution that did NOT cleanly succeed keeps its trace in every mode —
+// that is the only time anyone wants to read it.
+const brokenResolution = clone(cleanFactory);
+brokenResolution.resolution.using_plugin_install_root = true;
+ok(scopeFactoryForMode(brokenResolution, "fast").resolution.candidates !== undefined, "C5 a factory resolved from the plugin install root keeps its trace on fast");
+const unresolved = clone(cleanFactory);
+unresolved.resolution.resolved_via = null;
+ok(scopeFactoryForMode(unresolved, "fast").resolution.candidates !== undefined, "C5 a factory that never resolved keeps its trace on fast");
+ok(scopeFactoryForMode(null, "fast") === null, "C5 scoping tolerates a missing factory");
+ok(scopeFactoryForMode({ factory_id: "x" }, "fast").factory_id === "x", "C5 scoping tolerates a factory with no resolution block");
+
+// #165 — queue depth comes from p1_total, so the view can ship a sample.
+ok(/\.\.\.and 36 more P1 tasks/.test(normalRun.view), "#165 the overflow line is computed from p1_total (44) minus the 8 shown, not from the array length");
+const noTotal = clone(green);
+noTotal.summary.rows[0].p1_tasks = P1_SAMPLE.concat([{ id: 999, title: "extra", category: "c", owner: "o" }]);
+ok(
+  /\.\.\.and 1 more P1 task/.test(formatStartupView({ startup: noTotal, session: {}, identity: {}, factory: {} })),
+  "#165 a view without p1_total still renders a correct overflow from the array length"
+);
+
+// Smith binding condition 4 — the rule guard must not fail open.
+//
+// The failure on record: a migration drops or renames the probot rule scope.
+// v_startup_rules returns 0 rows with ok:true — no query failure, outcome stays
+// complete. governance_health still reads its unaffected aggregate. Once
+// startup.rules is omitted on fast, governance_health is the SOLE rule signal,
+// and this branch used to SKIP ENTIRELY when the target was missing or zero.
+for (const [label, gov] of [
+  ["missing", { active_rule_count: 59 }],
+  ["zero", { active_rule_count: 59, rule_count_target: 0 }],
+  ["null", { active_rule_count: 59, rule_count_target: null }],
+]) {
+  const noTarget = clone(green);
+  noTarget.summary.rows[0].governance_health = gov;
+  const nv = formatFastStartupView({ mode: "fast", startup: noTarget, session: {}, identity: {}, factory: {} });
+  ok(!/Status: GREEN/.test(nv), `H1 a ${label} rule_count_target denies GREEN in the fast view`);
+  ok(/rule_count_target is missing or zero/.test(nv), `H1 a ${label} rule_count_target produces an explicit UNKNOWN item, never a skip`);
+  const nfv = formatStartupView({ startup: noTarget, session: {}, identity: {}, factory: {} });
+  ok(/UNKNOWN rules/.test(nfv), `H1 the full view labels a ${label} rule target UNKNOWN, not OK`);
+  ok(!/Factory status: GREEN/.test(nfv), `H1 a ${label} rule target denies GREEN in the full view`);
+  ok(!/OK 59 rules|OK 59\/59 rules/.test(nfv), `H1 a ${label} rule target never renders as OK 59 rules`);
+}
+// A real target still renders normally, so the fix cannot be satisfied by
+// making everything UNKNOWN.
+ok(/OK 40\/40 rules/.test(formatStartupView({ startup: green, session: {}, identity: {}, factory: {} })), "H1 a satisfied rule target still renders OK");
+ok(/Status: GREEN/.test(formatFastStartupView({ mode: "fast", startup: green, session: {}, identity: {}, factory: {} })), "H1 a healthy factory is still allowed to be GREEN");
+
+// #166 (a) — session hygiene. Reuse the open same-day per-platform row instead
+// of minting one per startup_run. This confers NO freshness authority: rows 137,
+// 138 and 150 stop accumulating, and nothing else about staleness changes.
+const reuseRec = modeConnections({ existingSession: { id: 150, session_date: "2026-08-07", platform: "claude-code", session_type: "work" }, seeded: 0 });
+const reuseRun = parse(await handleToolCall(reuseRec.conn, "omatic_factory_startup_run", { mode: "normal" }));
+ok(reuseRun.session.id === 150, "#166a an open same-day row is reused rather than a new one minted");
+ok(reuseRun.session.reused === true, "#166a the packet states that the session was reused, so nobody reads it as verified");
+ok(!reuseRec.seen.some((s) => /INSERT INTO factory_sessions/.test(s)), "#166a no factory_sessions row is minted when one already exists today");
+// M3 in the integration path, not only the unit: a reused session seeds 0 rows
+// and the built-in probe must still report connected.
+ok(
+  reuseRun.probe_results[0].status === "connected",
+  `M3 a reused session (seed returns 0) still yields a connected probe (got ${reuseRun.probe_results[0].status})`
+);
+ok(reuseRun.seeded === 0, "M3 the observed seed value of 0 is reported honestly rather than coerced");
+ok(normalRun.session.reused === false, "#166a a genuinely new session is marked not-reused");
+ok(normalRec.seen.some((s) => /INSERT INTO factory_sessions/.test(s)), "#166a a row is still minted when no same-day row exists");
+
+// ══ #167 — the commons and operator-profile loads rules #267 and #319 mandate ══
+//
+// The finding that makes this a correctness fix rather than a convenience one:
+// factory_commons content lives in schema `kb` while search_path is
+// {pg_catalog, public}, so an UNQUALIFIED query returns zero rows with
+// success=true and results_trustworthy=true — a silent empty result that reads
+// exactly like an empty commons. Probot hit this and had to probe
+// information_schema by hand. This is almost certainly the root cause of #138.
+const commonsConn = (rows, { ok = true, has = true, error = null } = {}) => ({
+  ...fakeConnections(),
+  has: () => has,
+  query: async () => {
+    if (!ok) throw new Error(error || "boom");
+    return { rows, count: rows.length };
+  },
+});
+
+const commonsGood = await loadCommonsState(commonsConn([{ documents: "69", chunks: "484", semantic_index: "63" }]));
+ok(commonsGood.loaded === true, "#167 a populated commons reports loaded");
+ok(commonsGood.counts.documents === 69 && commonsGood.counts.chunks === 484, "#167 the commons row counts are reported");
+
+// A zero-row commons is a FAILED load, never a quiet success (decision #226).
+const commonsEmpty = await loadCommonsState(commonsConn([{ documents: "0", chunks: "0", semantic_index: "0" }]));
+ok(commonsEmpty.loaded === false, "#167 a zero-row commons is a FAILED load, not a quiet success");
+ok(commonsEmpty.reason === "empty", "#167 the empty commons states why it failed");
+const commonsBroken = await loadCommonsState(commonsConn([], { ok: false, error: 'relation "kb.documents" does not exist' }));
+ok(commonsBroken.loaded === false, "#167 an unreadable commons is a failed load");
+ok(/does not exist/.test(commonsBroken.detail), "#167 the commons failure carries the real error");
+const commonsAbsent = await loadCommonsState(commonsConn([], { has: false }));
+ok(commonsAbsent.loaded === false && commonsAbsent.reason === "connection_not_configured", "#167 a missing kb connection is declared, not skipped");
+
+// The query must be SCHEMA-QUALIFIED. This is the bug, so it is asserted on the
+// SQL text rather than only on the result.
+let commonsSql = "";
+await loadCommonsState({ ...fakeConnections(), has: () => true, query: async (_n, sql) => { commonsSql = sql; return { rows: [{ documents: 1, chunks: 1, semantic_index: 1 }], count: 1 }; } });
+ok(/kb\.documents/.test(commonsSql), "#167 the commons query names the kb schema explicitly");
+ok(/kb\.document_chunks/.test(commonsSql) && /kb\.semantic_index/.test(commonsSql), "#167 every commons relation is schema-qualified");
+ok(!/FROM documents\b/.test(commonsSql), "#167 no unqualified relation survives — that is the silent-zero-rows bug");
+
+// Rule #319 verbatim returns ~80 KB across 26 dimensions and blows the output
+// cap. The packet carries the INDEX; bodies stay on demand.
+let profileSql = "";
+const profileState = await loadOperatorProfileState({
+  ...fakeConnections(),
+  has: () => true,
+  query: async (_n, sql) => {
+    profileSql = sql;
+    return { rows: [{ dimension: "voice", access_tier: "private", rows: "12" }, { dimension: "history", access_tier: "team", rows: "4" }], count: 2 };
+  },
+});
+ok(profileState.loaded === true, "#167 a populated operator profile reports loaded");
+ok(profileState.dimensions.length === 2, "#167 the profile index lists its dimensions");
+ok(profileState.dimensions[0].access_tier === "private", "#167 the profile index carries access_tier");
+ok(!/\bcontent\b/.test(profileSql), "#167 the profile query never selects dimension BODIES — that is the 80 KB");
+ok(/GROUP BY/.test(profileSql), "#167 the profile query is an aggregate index, not a table dump");
+const profileEmpty = await loadOperatorProfileState({ ...fakeConnections(), has: () => true, query: async () => ({ rows: [], count: 0 }) });
+ok(profileEmpty.loaded === false && profileEmpty.reason === "empty", "#167 an empty operator profile is a FAILED load");
+const profileAbsent = await loadOperatorProfileState({ ...fakeConnections(), has: () => false });
+ok(profileAbsent.loaded === false, "#167 a missing aboutjimmy connection is declared, not skipped");
+
+// Neither load may HALT the factory, and both must be DECLARED. The mode
+// fixtures have no kb/aboutjimmy connection, so both come back not-loaded.
+ok(fastRun.commons !== undefined, "#167 commons state travels in the fast packet");
+ok(fastRun.operator_profile !== undefined, "#167 operator profile state travels in the fast packet");
+ok(fastRun.success === true, "#167 a failed commons load does not halt the factory");
+ok(
+  fastRun.degraded_reasons.some((r) => /commons_load/.test(r)),
+  "#167 a failed commons load is DECLARED in degraded_reasons rather than silently skipped"
+);
+ok(
+  fastRun.degraded_reasons.some((r) => /operator_profile_load/.test(r)),
+  "#167 a failed operator-profile load is declared too"
+);
+ok(/local-brain-only/.test(fastRun.degraded_reasons.find((r) => /commons_load/.test(r)) || ""), "#167 the commons degradation names its fallback (rule #267)");
+// And it is visible in what a human reads, not only in the JSON — the C1 lesson.
+ok(/Commons: NOT LOADED/.test(fastRun.view), "#167 the fast view states the commons load state");
+ok(/Required Loads/.test(normalRun.view), "#167 the full view has a Required Loads block");
+
+// Q3 — the tool schema no longer describes a cache that does not exist.
+const modeTool = buildToolList(fakeConnections()).find((t) => t.name === "omatic_factory_startup_run");
+const modeDesc = modeTool.inputSchema.properties.mode.description;
+ok(!/green-check cache|short-TTL|bypassing the cache/i.test(modeDesc), "Q3 the mode description no longer advertises a green-check cache that was never built");
+ok(!/served from|repeat starts/i.test(modeDesc), "Q3 the mode description no longer implies a repeat fast start is served from anything");
+ok(/runs fresh on every call in every mode/.test(modeDesc), "Q3 the mode description states that the battery runs fresh in every mode");
+ok(/nothing is cached, skipped, or inherited/.test(modeDesc), "Q3 the mode description rules out inheritance between calls");
+ok(/REPORTING DEPTH only/.test(modeDesc), "Q3 the mode description says what mode actually controls");
+ok(/mode=fast\|normal\|audit/.test(modeTool.description), "Q3 the top-level tool description mentions that modes exist");
+ok(!/cache/i.test(modeTool.description), "Q3 the top-level description does not mention a cache at all");
 
 // ── A7 — inspection tools declare their search scope ──
 //
@@ -1020,7 +1508,12 @@ ok(/current_schemas\(true\)::text\[\]/.test(toolsCode), "A7 the search_path is c
 const LIVE_VIEW_COLUMNS = {
   readiness: "connector_id, display_name, criticality, category, agent_primary, platform_availability, fallback_behavior, probe_result, fallback_active, probe_note, probed_at, status_label".split(", "),
   embedding: "tier, tenant_id, total_rows, embedded, unembedded, stale, distinct_models, oldest_embed, newest_embed".split(", "),
-  summary: "last_session_id, session_date, platform, session_type, resume_notes, open_tasks, open_task_total, p1_tasks, agents, embedding_health, decommissioned_terms, sop_index, governance_health".split(", "),
+  // Re-captured 2026-08-07 after task #163: `p1_total` was added to
+  // v_startup_summary as a trailing column in the same release, so the renderer
+  // could stop deriving queue depth from the length of the p1_tasks array.
+  // `sop_index` still exists — #163 dropped the `summary` prose from inside the
+  // JSON value, not the column.
+  summary: "last_session_id, session_date, platform, session_type, resume_notes, open_tasks, open_task_total, p1_tasks, agents, embedding_health, decommissioned_terms, sop_index, governance_health, p1_total".split(", "),
   agreements: "agent_name, agreement_version, enforcement_model, required_rule_types, loaded_rules, tenant_id, missing_rule_types, status_label".split(", "),
   rules: "id, enforcement, rule, category, rule_type, agent, applies_to, tenant_id, updated_at".split(", "),
 };
