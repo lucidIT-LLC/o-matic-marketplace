@@ -1,6 +1,6 @@
 {
   "name": "o-matic-wordpress-factory",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "O-Matic WordPress Factory plugin with bundled brand, build, writing, and visual skills plus separate configurable WordPress and Elementor MCP connectors.",
   "author": {
     "name": "James Walker",
@@ -17,11 +17,9 @@
   "skills": "./skills/",
   "mcpServers": {
     "o-matic-wordpress-connector": {
-      "command": "/bin/sh",
+      "command": "node",
       "args": [
-        "${CLAUDE_PLUGIN_ROOT}/bin/omatic-wp-launch.sh",
-        "server/index.mjs",
-        "wordpress"
+        "${CLAUDE_PLUGIN_ROOT}/server/index.mjs"
       ],
       "env": {
         "OMATIC_PROJECT_ROOT": "${CLAUDE_PROJECT_DIR}",
@@ -37,11 +35,9 @@
       }
     },
     "o-matic-elementor-connector": {
-      "command": "/bin/sh",
+      "command": "node",
       "args": [
-        "${CLAUDE_PLUGIN_ROOT}/bin/omatic-wp-launch.sh",
-        "server/elementor.mjs",
-        "elementor"
+        "${CLAUDE_PLUGIN_ROOT}/server/elementor.mjs"
       ],
       "env": {
         "OMATIC_PROJECT_ROOT": "${CLAUDE_PROJECT_DIR}",

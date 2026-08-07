@@ -92,14 +92,23 @@ await check("launcher and degraded server exist and are executable", () => {
   }
 });
 
-// 2. No shipped manifest may name a bare interpreter. This is KB-0418 defect A
-//    stated as an assertion instead of a warning.
-await check("no shipped manifest declares a bare interpreter command", () => {
-  const manifests = [
-    join(pluginRoot, ".claude-plugin", "plugin.json"),
-    join(pluginRoot, ".mcp.json"),
-  ];
-  for (const path of manifests) {
+// 2. Each shipped manifest declares the command its distribution surface can
+//    actually accept. Two failure classes, one per surface:
+//
+//    - Raw manifests (.mcp.json, mcpb manifest.json) go to GUI-launched hosts
+//      that inherit the minimal system PATH, where a bare interpreter is
+//      unresolvable — KB-0418 defect A. They must point at the absolute
+//      /bin/sh launcher.
+//    - The plugin-catalog manifest (.claude-plugin/plugin.json) is ingested by
+//      the claude.ai marketplace, which refuses absolute-path commands and
+//      silently keeps the last accepted bundle. An absolute command here does
+//      not fail loudly anywhere — it pins every Desktop/Cowork install at the
+//      last accepted version (3.2.0, from 2026-08-03, while 3.3.0–3.5.0
+//      shipped). Catalog hosts manage their own Node runtime, so the bare
+//      interpreter is resolvable there.
+await check("each manifest declares the command its surface accepts", () => {
+  const absoluteSurfaces = [join(pluginRoot, ".mcp.json")];
+  for (const path of absoluteSurfaces) {
     const raw = JSON.parse(readFileSync(path, "utf8"));
     const servers = raw.mcpServers || raw.mcp_servers || raw;
     for (const [name, cfg] of Object.entries(servers)) {
@@ -109,6 +118,15 @@ await check("no shipped manifest declares a bare interpreter command", () => {
         `${path} -> ${name} declares a non-absolute command "${cfg.command}"; GUI hosts do not inherit the login shell PATH`
       );
     }
+  }
+  const catalogPath = join(pluginRoot, ".claude-plugin", "plugin.json");
+  const catalog = JSON.parse(readFileSync(catalogPath, "utf8"));
+  for (const [name, cfg] of Object.entries(catalog.mcpServers || {})) {
+    if (!cfg || typeof cfg !== "object" || !cfg.command) continue;
+    assert(
+      !cfg.command.startsWith("/"),
+      `${catalogPath} -> ${name} declares an absolute command "${cfg.command}"; the claude.ai marketplace ingest refuses it and silently pins Desktop at the last accepted bundle`
+    );
   }
 });
 
