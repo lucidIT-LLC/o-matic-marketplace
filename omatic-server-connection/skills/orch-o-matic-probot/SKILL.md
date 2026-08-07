@@ -162,16 +162,36 @@ STEP 3 — Startup runner
 |                    with "start an audit".
 |  Mode controls REPORTING DEPTH only — the full safety + health battery runs
 |  fresh in EVERY mode, so a broken agreement or empty rule corpus is never masked.
-|- Plugin returns (normal/audit; fast returns the same fields with a terse view):
-|    session       — current platform-specific factory_sessions row
-|    summary       — v_startup_summary (last session, tasks, embedding_health, decommissioned_terms)
-|    rules         — v_startup_rules for agent='probot'
-|    readiness     — v_mcp_readiness_by_session for the new session
-|    embedding     — v_embedding_health per tier
-|    agreements    — v_agent_agreement for every skill
-|    sop_index     — active SOP index from v_startup_summary
+|- Plugin returns (decision #246 — modes now differ in the PAYLOAD, not only the view):
+|    session       — platform-specific factory_sessions row. Same-day rows are REUSED
+|                    (session.reused=true). Reuse is hygiene only: it asserts nothing
+|                    about how fresh any measurement is.
+|    summary       — v_startup_summary. EVERY MODE, fetched fresh. On fast this is a
+|                    five-column projection (last_session_id, platform, resume_notes,
+|                    open_task_total, governance_health); normal/audit take the full row.
+|    agreements    — v_agent_agreement for every skill. EVERY MODE, fresh and WHOLE.
+|                    Never trimmed, never cached — it is the halt input.
+|    readiness     — v_mcp_readiness_by_session. EVERY MODE (six columns on fast).
+|    embedding     — v_embedding_health per tier. EVERY MODE.
+|    probe_coverage— measured / stale / untested. EVERY MODE.
+|    rules         — v_startup_rules for agent='probot'. NORMAL AND AUDIT ONLY.
+|                    The query still runs on fast; a failure lands in degraded_reasons.
+|    loaded_skills — AUDIT ONLY. It is a projection of `agreements`; on fast and normal
+|                    derive the roster from agreements instead of expecting this key.
+|  sop_index is NOT a top-level block and never was — it is a COLUMN inside
+|  summary.rows[0], and the fast projection does not select it. Do not look for
+|  startup.sop_index in any mode. Run mode=normal or audit when you need the SOP index.
+|  factory.resolution keeps resolved_via in every mode; the candidate trace
+|  (roots_considered, candidates, rejected_pins) appears only on audit or when
+|  resolution did not cleanly succeed.
 |- IF summary.ok = false AND error mentions missing view -> Sage mode (SOP-010). STOP.
 |- IF agreements has loaded_rules=0 for any skill with enforcement_model='halt_on_missing' -> HALT.
+|  The fast view now reports this itself as "Status: HALT" and names the agent. Before
+|  decision #246 it could not see agreements at all and printed GREEN over a broken
+|  Agreement — if a fast view ever says GREEN while an agreement is broken, that is a
+|  regression, not a pass.
+|- A connector probed more than 15 minutes ago reports STALE, not OK, and STALE denies
+|  GREEN exactly as UNTESTED does. Ages are rendered ("OK (probed 4m ago)").
 +- -> STEP 4
 
 STEP 4 — Platform probe refinement + report
