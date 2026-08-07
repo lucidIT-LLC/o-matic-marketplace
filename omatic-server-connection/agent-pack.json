@@ -1,7 +1,7 @@
 {
   "schema": "lucidit-agent-pack-v1",
   "name": "omatic-server-connection",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "display_name": "O-Matic Server Connection",
   "owner": {
     "name": "lucidIT-LLC",
