@@ -2271,8 +2271,8 @@ function startupViewForMode(payload) {
 //
 // `connection` is therefore part of the observation set, alongside the session
 // and seed results: all three describe what actually happened. Callers that
-// supply one get the `postgres-cabinet-{name}` form, which fn_record_probe_result
-// canonicalizes and REJECTS when absent from mcp_registry — the honest outcome
+// supply one get the `omatic-server-{name}` form, which fn_record_probe_result
+// records when present in mcp_registry — the honest outcome
 // being "no probe recorded for this connection", never a probe recorded against
 // someone else's connector. handleStartupRun always supplies it; the bare
 // default remains only for callers with no connection to name (unit tests).
@@ -2297,7 +2297,7 @@ function deriveBuiltInPostgresProbe(observed) {
   ];
 
   return {
-    connector_name: connection ? `postgres-cabinet-${connection}` : "postgres-omatic",
+    connector_name: connection ? `omatic-server-${connection}` : "omatic-server-omatic",
     status: sessionAnchored && seedObserved ? "connected" : "degraded",
     note: connection
       ? `Startup runner on connection "${connection}": ${evidence.join("; ")}`

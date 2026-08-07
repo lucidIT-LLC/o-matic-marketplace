@@ -368,7 +368,7 @@ ok(
 // Both observations succeeded: connected is earned.
 const probeGreen = deriveBuiltInPostgresProbe({ sessionId: 42, seedOk: true, seedValue: 7 });
 ok(probeGreen.status === "connected", "A15 probe is connected when the INSERT and seed both succeeded");
-ok(probeGreen.connector_name === "postgres-omatic", "A15 probe names the connector it measured");
+ok(probeGreen.connector_name === "omatic-server-omatic", "A15 probe names the connector it measured");
 ok(/session id 42/.test(probeGreen.note), "A15 probe note cites the observed session id");
 ok(/returned 7/.test(probeGreen.note), "A15 probe note cites the observed seed value");
 ok(
@@ -707,10 +707,10 @@ const runRes = parse(
 ok(probeCalls.length === 1, `A6 exactly one probe was written to the registry (got ${probeCalls.length})`);
 // A5 (P4): the built-in probe was hardcoded to "postgres-omatic" regardless of
 // which connection carried the I/O. It now names the connection it actually
-// exercised; fn_record_probe_result canonicalizes the postgres-cabinet-{name}
+// exercised; fn_record_probe_result records the omatic-server-{name}
 // form. fakeConnections()'s default connection is "omatic".
 ok(
-  probeCalls[0] === "postgres-cabinet-omatic",
+  probeCalls[0] === "omatic-server-omatic",
   `A5 the written probe names the connection actually exercised (got ${probeCalls[0]})`
 );
 ok(
