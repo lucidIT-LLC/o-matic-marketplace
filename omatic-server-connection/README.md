@@ -216,10 +216,10 @@ host and user:
 | `disabled` | The connection resolves and is listed, but no tool will use it. Visible, deliberately parked |
 
 ```
-omatic_edit_connection { "name": "benecard", "permission": "read_only" }
+omatic_edit_connection { "name": "client-db", "permission": "read_only" }
 ```
 
-`benecard` is a client database and `dbadmin` connects as a superuser. Before
+Some connections reach client data, and some connect with elevated rights. Before
 this, the only thing preventing a tool writing to either was the model choosing
 not to — a rule loaded, not a rule obeyed. The permission is **enforced**, in
 one chokepoint, for every tool and every pinned variant, before any handler runs
@@ -245,7 +245,7 @@ would strand the operator with no way back.
 
 A refusal names the connection, the mode, and the tool that was stopped:
 
-> Refused: connection "benecard" is read_only. `omatic_execute_sql` performs a
+> Refused: connection "client-db" is read_only. `omatic_execute_sql` performs a
 > write, so it was stopped at the tool layer and never reached the database.
 > Reads against this connection still work.
 

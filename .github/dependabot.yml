@@ -1,0 +1,58 @@
+# Dependabot proposes updates; nothing here merges on its own.
+#
+# The plugin runtime is vendored, so a Dependabot pull request updates
+# package.json and package-lock.json but NOT the committed node_modules tree
+# that actually ships. verify-vendored-deps.mjs will fail such a PR by design.
+# Re-vendor before merging:
+#
+#   cd omatic-server-connection/server && npm ci
+#   git add -f omatic-server-connection/server/node_modules
+#   node scripts/gen-third-party-notices.mjs
+#
+# That failure is the point: it stops a lockfile bump shipping without the files
+# it implies.
+
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /omatic-server-connection/server
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - needs-revendor
+    commit-message:
+      prefix: deps
+    groups:
+      # One PR per ecosystem sweep rather than one per package: every update
+      # requires the same manual re-vendor step, so batching them is the
+      # difference between one re-vendor a week and five.
+      all-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /o-matic-wordpress-factory
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels:
+      - ci
+    commit-message:
+      prefix: ci

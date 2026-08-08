@@ -2088,7 +2088,7 @@ async function embeddingCredentialRows(connections, tenantId) {
 // A7, applied to the other schema-filtered probe in this file. This asked
 // `to_regclass('public.<table>')` while the statements it gates — the
 // work_claims INSERT and UPDATE — reference the table UNQUALIFIED. The two can
-// disagree: benecard's work_claims is `ops.work_claims` behind a public view,
+// disagree: one factory's work_claims is `ops.work_claims` behind a public view,
 // and a factory that skipped the view would be told "not installed" about a
 // table its own DML would have found. Resolving unqualified asks the question
 // the caller actually means: "will my statement reach this relation?" — and the
@@ -2201,7 +2201,7 @@ async function handleUsageGuide(connections, args = {}, explicitConnection = nul
       switch_active: "omatic_set_active_connection — point the unsuffixed base tools at a different connection.",
       control_access:
         "Every connection carries a permission: read_write (default), read_only, or disabled. Set it with " +
-        'omatic_edit_connection(name="benecard", permission="read_only"). It is enforced at the tool layer for every ' +
+        'omatic_edit_connection(name="client-db", permission="read_only"). It is enforced at the tool layer for every ' +
         "tool and every pinned variant, before any handler runs and before any pool opens — there is no argument, " +
         "flag or alias that bypasses it. A read_only connection additionally runs with " +
         "default_transaction_read_only=on so the database refuses writes too. Use read_only for client databases and " +

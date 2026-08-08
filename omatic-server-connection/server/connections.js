@@ -30,7 +30,7 @@ const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 // ── Per-connection permission (section C, C6) ────────────────────────────────
 //
-// `benecard` is a client database. `dbadmin` connects as a superuser. Before
+// Some connections reach client data; some connect with elevated rights. Before
 // this, any tool could write to either and the only thing preventing it was the
 // model choosing not to — a rule loaded, not a rule obeyed (#321). The mode is
 // stored in .omatic/factory.json beside host/user/ssl_mode and is enforced, not
