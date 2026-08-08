@@ -5,7 +5,7 @@ description: Use when operating an O-Matic Server project through the Codex plug
 
 # O-Matic Server — Operating Guide
 
-<!-- version: 3.7.0 | sig: 2 | author: James Walker | package: O-Matic Server Connection -->
+<!-- version: 4.0.0 | sig: 2 | author: James Walker | package: O-Matic Server Connection -->
 
 This plugin is project-centric. Resolve the active factory from folder context before running factory work.
 
@@ -38,16 +38,16 @@ Use `omatic_embedding_status` when the operator asks how embeddings, pgvector, o
 
 ## Embedder Worker
 
-The plugin ships `server/embedder-worker.js` as the background embedding worker. Run once with:
+The plugin ships `scripts/embed-drain.mjs` as the embedding drain. It speaks the provider named in `factory_config` and covers both tiers. Run once with:
 
 ```bash
-OMATIC_PROJECT_ROOT=/path/to/factory node server/embedder-worker.js
+OMATIC_PROJECT_ROOT=/path/to/factory node scripts/embed-drain.mjs
 ```
 
 Run as a service loop with:
 
 ```bash
-OMATIC_PROJECT_ROOT=/path/to/factory node server/embedder-worker.js --watch
+OMATIC_PROJECT_ROOT=/path/to/factory node scripts/embed-drain.mjs --watch
 ```
 
 Embedder refreshes only admitted Tier 1 and Tier 2 rows already present in `brain.semantic_index` and `brain.document_chunks`. It does not admit memory, resolve contradictions, promote canon, retire records, or decide truth.

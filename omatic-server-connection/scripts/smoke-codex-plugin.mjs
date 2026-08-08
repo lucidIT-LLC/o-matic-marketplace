@@ -97,8 +97,18 @@ assert(
   "Codex manifest points at a launcher that does not exist in the package"
 );
 assert(!Object.prototype.hasOwnProperty.call(serverConfig, "cwd"), "Codex MCP config must not pin cwd; Cowork falls back to process.cwd() when env vars are not expanded");
-assert(serverConfig.env?.OMATIC_PLATFORM === "codex", "Codex MCP env must set OMATIC_PLATFORM=codex");
-assert(serverConfig.env?.OMATIC_PROJECT_ROOT === "${CODEX_WORKSPACE}", "Codex MCP env must set OMATIC_PROJECT_ROOT=${CODEX_WORKSPACE}");
-assert(serverConfig.env?.OMATIC_FACTORY_JSON_PATH === "${CODEX_WORKSPACE}/.omatic/factory.json", "Codex MCP env must set OMATIC_FACTORY_JSON_PATH from CODEX_WORKSPACE");
+// One manifest ships to Codex, Claude Code and Cowork alike, so it must not
+// assert anything host-specific. The three env keys below used to be pinned to
+// Codex here, which meant every Claude Code and Cowork session identified
+// itself as Codex and offered the two highest-precedence root slots a variable
+// only Codex binds. The surface is now detected at spawn by detectPlatform(),
+// and the project root is resolved by the ranked candidate ladder, so the
+// correct manifest contract is the absence of these keys.
+for (const key of ["OMATIC_PLATFORM", "OMATIC_PROJECT_ROOT", "OMATIC_FACTORY_JSON_PATH"]) {
+  assert(
+    serverConfig.env?.[key] === undefined,
+    `MCP env must not hardcode ${key}; it is host-specific and the manifest ships to every host (got "${serverConfig.env?.[key]}")`
+  );
+}
 
 console.log(`smoke-codex-plugin ok: ${codexPlugin.name}@${version}`);
