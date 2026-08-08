@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.6.0 — 2026-08-07
+
+First bridge release toward Factory 4.0 (FA-2026-04 / KB-0422). Additive only — a
+3.5.1 factory upgrades and behaves identically until it changes `factory_config`.
+
+- `embedder-worker.js` resolves the embedding endpoint from `factory_config`
+  (`openai_base_url` / `openai_embedding_base_url`, or `OMATIC_OPENAI_BASE_URL` /
+  `OPENAI_BASE_URL`), defaulting to `https://api.openai.com/v1`. It previously
+  hardcoded `https://api.openai.com/v1/embeddings` while `tools.js` had resolved the
+  same value from config since 3.x — one plugin, two behaviours for one job. A factory
+  can now point the write path at any OpenAI-compatible endpoint, including an
+  on-device embedder on loopback, without editing plugin source.
+- The dimension check reads `embedding_dimension` from `factory_config` (or
+  `OMATIC_EMBEDDING_DIM`) instead of a hardcoded `EXPECTED_DIM = 1536`. KB-0051 v2.0.0
+  forbids a dimension literal anywhere outside `factory_config`.
+- `embedTexts`, `embedTier` and `writeEmbeddings` now take a resolved settings object
+  rather than growing positional arguments, mirroring `embeddingSettingsFromRows` in
+  `tools.js`.
+
+Not in this release: text prefix support (`search_document:` / `search_query:`),
+`TableDescriptor`s for the `kb` and operator schemas, and the contract guard. Those
+land in later 3.x minors. `embedder-worker.js` is not retired until 4.0.0, and not
+before the Swift worker has drained every database unattended with a non-zero
+verified count.
+
 ## 3.5.1 — 2026-08-07
 
 - plugin.json `mcpServers` returns to `command: "node"` with a direct `server/index.js` entry. The `/bin/sh` + `bin/omatic-launch.sh` form (introduced in 3.3.0 for #143) is refused by the claude.ai marketplace ingest, which silently keeps the last accepted bundle — Claude Desktop/Cowork was pinned at 3.2.0 while 3.3.0–3.5.0 shipped. Hosts that consume plugin.json manage their own Node runtime, so the bare interpreter name is resolvable there; the shell launcher and degraded advisory server remain in `bin/` and continue to back the `.mcpb` (`manifest.json`) path, where the GUI-PATH defect (KB-0418 defect A) actually lives.
