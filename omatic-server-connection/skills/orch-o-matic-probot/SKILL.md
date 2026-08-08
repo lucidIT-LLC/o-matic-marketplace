@@ -3,7 +3,7 @@ name: orch-o-matic-probot
 description: O-Matic Orchestrator. Plans, routes, and runs the factory. Triggers — Probot, start the factory, start an audit, close the session, convert this factory, plan this, set up a project, diagnose the factory.
 ---
 
-<!-- version: 14.2.0 | sig: 24 | identity: 972135db | author: James Walker | factory: O-Matic -->
+<!-- version: 14.3.0 | sig: 24 | identity: 972135db | author: James Walker | factory: O-Matic -->
 <!-- identity sourced from O-Matic persona gold record (tenant omatic). identity_signature: 972135db96de17a77453eeee2d6b8d4b -->
 
 # Orch-O-Matic (Probot) — O-Matic Project Orchestrator
@@ -332,7 +332,7 @@ Promotion requires source identity, owner, lifecycle state, task/session scope, 
 
 ### Embedder Worker Contract
 
-Embeddings are a background service responsibility. Postgres stores vectors; the plugin ships `server/embedder-worker.js` and the `embed-o-matic-embedder` skill contract to refresh admitted rows.
+Embeddings are a background service responsibility. Postgres stores vectors; the plugin ships `server/embedder-worker.js` to refresh admitted rows. The `embed-o-matic-embedder` skill contract was removed in 3.7.0 — the embedding write path is now an external service (Conductor, or any OpenAI-compatible endpoint named in `factory_config`), not a factory skill. `embedder-worker.js` remains the fallback drain until 4.0.0.
 
 When code (skill or operator) writes a Tier 3 row:
 1. INSERT/UPDATE the source row.
@@ -388,6 +388,7 @@ Operator decision required: [yes/no]
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 14.3.0 | 2026-08-08 | Embedder Worker Contract updated for the `embed-o-matic-embedder` skill removal (plugin 3.7.0). The embedding write path is an external service named in `factory_config`; `embedder-worker.js` stays as the fallback drain until 4.0.0. |
 | 14.2.0 | 2026-06-21 | Added explicit memory lifecycle governance contract: admission gate, lifecycle states, authority boundaries, contradiction/supersession handling, and operator escalation points. Replaced writer-owned vector refresh language with the plugin Embedder worker contract. |
 | 14.1.0 | 2026-06-05 | Rendered from the persona gold record (identity_signature 972135db…). Added Section 3b (Archetype & Character): 6-layer hierarchy (Mission Control/Chief of Staff · Retro Robot Companion · Air Traffic Controller · Incident Commander · Workflow Compiler · Procedural Guardian) + character notes. Enriched personality (protective, mildly exasperated, "keep the humans alive"); added voice anchors (Containment recommended / Warning: / My risk circuits say…) and sample lines. Retro-robot guardrail: archetype only, never a protected character. Startup/tool/governance adapter unchanged. |
 | 14.0.0 | 2026-05-17 | Plugin-first startup protocol. STEP 1 = omatic_resolve_factory (plugin probe replaces filesystem probe + PI bootstrap). STEP 3 = omatic_factory_startup (single tool, single round-trip). Per-connection tool variants documented (`:name` suffix). `omatic_set_active_connection` documented as between-task-only. platform_profile awareness added — gates Cowork/Codex-specific restart prose. "Restart Claude Code" prose dropped (`notifications/tools/list_changed` handles refresh on Claude Code 2.1.0+). Tool Usage section rewritten — references plugin tool names (omatic_*), drops direct Filesystem/raw-SQL-tool mentions. Lane Discipline vocabulary clarified — factory roles are skills, not agents (rule 237). Ships inside o-matic-server plugin alongside Data and Fred. |
