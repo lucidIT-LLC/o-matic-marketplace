@@ -15,23 +15,23 @@ For local subnet work, run the host or MCP server in an environment that can rea
 
 ## LAN And Tailnet Runtime Services
 
-TailRunner is the planned bridge for working both on and off the tailnet. It is
-not just an MCP server. It should host the embedding service, health checks,
-simple HTTPS endpoints, and a Streamable HTTP MCP surface when a tool host needs
-MCP.
+Conductor is the planned app and service bridge for working both on and off the
+tailnet. It is not just an MCP server. It should host the embedding service,
+health checks, simple HTTPS endpoints, and a Streamable HTTP MCP surface when a
+tool host needs MCP.
 
-This release documents TailRunner as a design target so local and tailnet use
+This release documents Conductor as a design target so local and tailnet use
 stop being treated as a plugin-install problem. Claude Desktop, Codex, and
 possibly Copilot can all benefit from a stable HTTPS service on the LAN/tailnet:
 
-- Claude Desktop and Codex can continue using local plugins while TailRunner
+- Claude Desktop and Codex can continue using local plugins while Conductor
   provides reachable network services.
 - Copilot/Gemini/OpenAI-style hosts need an HTTPS endpoint and should use the
-  same TailRunner boundary when remote tool access is required.
+  same Conductor boundary when remote tool access is required.
 - Tailnet service identity and public exposure are deployment switches, not
   plugin manifest fields.
 
-See `docs/TAILRUNNER.md`.
+See `docs/CONDUCTOR.md`.
 
 ## Remote MCP Hosts
 
@@ -46,7 +46,7 @@ reachable HTTPS endpoint rather than a local stdio command.
 - This repository currently ships stdio plugin packages, prompt exports, and remote-host configuration examples. A hosted Streamable HTTP bridge is a separate distribution target.
 - Example remote host configs live at `adapters/copilot/openapi.mcp-streamable.example.yaml` and `adapters/gemini/remote-mcp.example.json`. They are templates only; `example.internal` must be replaced by a real hosted MCP endpoint inside the intended trust boundary.
 
-Do not claim remote tool support until TailRunner or another hosted bridge has:
+Do not claim remote tool support until Conductor or another hosted bridge has:
 
 1. Authentication.
 2. A small allow-listed tool surface.

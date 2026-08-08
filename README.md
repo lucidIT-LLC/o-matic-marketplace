@@ -66,11 +66,12 @@ node scripts/audit-installed-skill-duplicates.mjs
 
 Catalog manifests: `.claude-plugin/marketplace.json` (Claude Code) and `.agents/plugins/marketplace.json` (Codex parity). Host-neutral adapters (Codex, Copilot, Gemini, Ollama) and `agent-pack.json` live alongside for non-Claude hosts. `AGENTS.md`, `GEMINI.md`, and `.github/copilot-instructions.md` give coding agents the repo rules. See `docs/HOST-READINESS.md` before adding a new host or changing network assumptions.
 
-This release also records **TailRunner** as the runtime bridge direction for
-working on and off the tailnet. The marketplace remains the plugin catalog;
-TailRunner is the planned network-facing service for LAN/tailnet HTTPS,
-embedding, health checks, and remote MCP surfaces when Claude Desktop, Codex,
-Copilot, Gemini, or OpenAI need a reachable service boundary.
+This release also records **Conductor**, from O-Matic, as the runtime bridge
+direction for working on and off the tailnet. The marketplace remains the plugin
+catalog; Conductor is the planned network-facing app/service for local subnet
+delivery, tailnet HTTPS, embedding, health checks, PGVector service access, and
+remote MCP surfaces when Claude Desktop, Codex, Copilot, Gemini, OpenAI, or
+future Siri/App Intents workflows need a reachable service boundary.
 
 ---
 

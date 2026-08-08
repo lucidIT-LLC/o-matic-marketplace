@@ -38,6 +38,7 @@ pgvector-backed retrieval with lifecycle governance, auditable operating context
 | F | Fred file intake without Docling | Fred | task #111 | infra | spec → design |
 | G | Fred L2 Session-Rhythm continuity | Fred | task #110 | infra | spec → design |
 | H | Auto-embedding — Embedder standing service | Carver (build) / Data (health) | rule #314, SOP-019, PK-24/25, task #97/#98 | infra | 🎯 **DESIGNED, deferred to 3.0 build cycle** (event-driven LISTEN/NOTIFY daemon on linus — decision #191); brain backfilled green in the interim |
+| I | Conductor — local/LAN/tailnet service bridge | Carver (app/service) / Data (embedding+PGVector) / Probot (runtime policy) | design note `docs/CONDUCTOR.md` | app/runtime | design goals logged — Blueprint 3 candidate |
 
 > **Beta status (2026-06-21):** `beta` is the **staged** v3 line. A/B are folded in; C is built and on beta. D–H are designed/scoped but **builds are deferred to the 3.0 upgrade cycle** — current focus is hardening v2 (stable) and keeping beta ready, not constructing 3.0. Nothing here ships to `stable` until the 3.0 cut.
 
@@ -155,6 +156,47 @@ fallback (task #97), never a shared O-Matic key baked into the image/repo.
 green (0 stale) and is visible at startup; keyless degrades to FTS cleanly; Embedder makes
 **zero** truth/admission decisions in any path.
 
+## I — Conductor: local/LAN/tailnet service bridge
+
+**Conductor** is the planned macOS app/service from O-Matic. The app name is
+Conductor; the attribution is from O-Matic. It is not `O-Matic Conductor` and
+not `TailRunner`.
+
+Blueprint 3 needs a controlled service-delivery layer between AI hosts and
+private O-Matic resources. Conductor owns that layer.
+
+**Design goals:**
+
+1. Deliver O-Matic services locally, on the LAN, on the tailnet, and through
+   controlled remote HTTPS surfaces.
+2. Run the embedding service and expose embedding health.
+3. Provide controlled PGVector/search access without becoming an arbitrary SQL
+   gateway.
+4. Publish stable service endpoints for Claude Desktop, Codex, local scripts,
+   and internal devices.
+5. Offer a Streamable HTTP MCP service only where a host needs MCP; MCP is a
+   surface, not the center.
+6. Support explicit access modes: `local_only`, `lan_https`, `tailnet_https`,
+   and `remote_https`.
+7. Require authentication, allow-listing, audit logs, and visible network mode
+   before any `remote_https` exposure.
+8. Leave room for Siri/App Intents and Shortcuts through app-owned status,
+   control, and read-only actions.
+
+**Product model:**
+
+- Conductor — the app/service.
+- Bridge — service exposure layer.
+- Sentry Mode — access/security posture.
+- Embedder — embedding service.
+- PGVector Service — controlled vector/search service.
+- MCP Service — optional tool surface.
+
+**Acceptance:** Conductor can run local-only by default; can publish a visible
+LAN/tailnet HTTPS service with health/readiness; can embed and report embedding
+health; can reach PGVector through controlled service paths; and can expose a
+small, authenticated MCP surface only when explicitly enabled.
+
 ---
 
 ## Dependencies
@@ -166,6 +208,9 @@ green (0 stale) and is visible at startup; keyless degrades to FTS cleanly; Embe
 - **H** is mostly *already built* (Embedder shipped 2.1.6). The remaining work is scheduling it as
   a standing service + key onboarding (#97) + query-embedding provider (#98). It **feeds C**:
   startup normal/audit modes report embedding-health counts. Do H alongside C.
+- **I** consumes H's embedding direction and extends it into a user-facing app/service. It must
+  stay separate from marketplace packaging: plugins install host surfaces; Conductor owns service
+  reachability.
 
 ## Routing (no hero-ball)
 
@@ -176,6 +221,7 @@ green (0 stale) and is visible at startup; keyless degrades to FTS cleanly; Embe
 | D, E (plugins) | **Carver** | spec handoff, Smith gate before release |
 | F, G (Fred infra) | **Fred** | spec handoff |
 | H (auto-embedding) | **Carver** (service wiring) + **Data** (health/evals) | guard the truth/admission boundary (SOP-019) |
+| I (Conductor app/service) | **Carver** (app/service) + **Data** (embedding/PGVector) + **Probot** (runtime policy) | keep MCP as a surface, not the center |
 
 Each workstream: spec → build (owner) → **Smith adversarial gate** → merge to `beta` →
 green pass → fast-forward `stable`. Versioned tags only (`vX.Y.Z`, `<plugin>-vX.Y.Z`) —
