@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "pg": "^8.11.3"
+    "pg": "^8.22.0"
   },
   "author": "James Walker / O-Matic AI Research Lab",
   "license": "MIT",
