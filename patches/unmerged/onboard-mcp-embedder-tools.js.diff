@@ -1,0 +1,399 @@
+--- pub360.js	2026-08-08 15:01:52
++++ /Users/lucid/.claude/plugins/cache/o-matic-marketplace/omatic-server-connection/3.6.0/server/tools.js	2026-08-08 14:33:50
+@@ -117,6 +117,14 @@
+ const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
+ const DEFAULT_EMBEDDING_BASE_URL = "https://api.openai.com/v1";
+ 
++// Onboard embedding providers speak MCP JSON-RPC, not the OpenAI REST shape.
++// There is deliberately NO default endpoint: baking one in would ship a single
++// factory's host address to every installation, and a wrong-but-present default
++// fails as a confusing timeout instead of a clear "you have not configured this".
++// factory_config.embedding_provider selects the path; see resolveOnboardEndpoint.
++const ONBOARD_PROVIDER_PATTERN = /^onboard\b|^onboard[-_]/i;
++const DEFAULT_ONBOARD_TIMEOUT_MS = 20_000;
++
+ function buildServerInstructions() {
+   return [
+     "Use omatic_usage_guide before choosing O-Matic tools in a new project or thread.",
+@@ -1339,8 +1347,93 @@
+   return raw;
+ }
+ 
++// factory_config.value is jsonb. Depending on driver settings a scalar arrives
++// either already-parsed ("nomic…") or as its JSON text ("\"nomic…\""), and the
++// old code path only ever touched keys it String()-ed, so the difference never
++// showed. Reading dimensions and a weights identifier makes it matter: a
++// dimension compared as the string "768" against the number 768 is a false
++// mismatch, and a quoted identifier never equals its unquoted twin.
++function configValue(raw) {
++  if (raw === undefined || raw === null) return null;
++  if (typeof raw === "object") return raw;
++  if (typeof raw === "number" || typeof raw === "boolean") return raw;
++  const text = String(raw).trim();
++  if (!text) return null;
++  const looksJson =
++    (text.startsWith('"') && text.endsWith('"')) || text.startsWith("{") || text.startsWith("[");
++  if (looksJson) {
++    try {
++      return JSON.parse(text);
++    } catch {
++      return text;
++    }
++  }
++  return text;
++}
++
++function configScalar(raw) {
++  const value = configValue(raw);
++  if (value === null || typeof value === "object") return null;
++  return String(value);
++}
++
++function configObject(raw) {
++  const value = configValue(raw);
++  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
++}
++
++// The endpoint is required, never defaulted. Accepts either the MCP URL itself
++// or the service root; the reference client appends /mcp to a root, so both
++// spellings an operator might paste are honoured rather than silently failing.
++function resolveOnboardEndpoint(values, env) {
++  const storage = configObject(values.get("storage.vector"));
++  const configured =
++    env.OMATIC_EMBEDDER_URL ||
++    configScalar(values.get("embedding_endpoint")) ||
++    configScalar(values.get("embedding_base_url")) ||
++    (storage.endpoint ? String(storage.endpoint) : null);
++  if (!configured) return null;
++  const trimmed = String(configured).trim().replace(/\/+$/, "");
++  return /\/mcp$/i.test(trimmed) ? trimmed : `${trimmed}/mcp`;
++}
++
+ function embeddingSettingsFromRows(rows, env = process.env, overrideModel = null) {
+   const values = configMap(rows);
++  const provider = configScalar(values.get("embedding_provider")) || "";
++  const storage = configObject(values.get("storage.vector"));
++
++  // Provider selects the transport. Anything not onboard keeps the exact
++  // OpenAI behaviour below, so factories that never migrated are untouched.
++  if (ONBOARD_PROVIDER_PATTERN.test(provider)) {
++    const expectedDimensionRaw =
++      configScalar(values.get("embedding_dimension")) ??
++      (storage.embedding_dims !== undefined ? String(storage.embedding_dims) : null);
++    const expectedDimension = expectedDimensionRaw === null ? null : Number(expectedDimensionRaw);
++    const expectedWeights =
++      configScalar(values.get("embedding_model_identity")) ||
++      (storage.embedding_model_identity ? String(storage.embedding_model_identity) : null);
++    const token =
++      env.OMATIC_EMBEDDER_TOKEN ||
++      resolveSecretReference(values.get("embedding_api_key"), env) ||
++      resolveSecretReference(values.get("embedding_token"), env);
++    const model =
++      overrideModel ||
++      env.OMATIC_EMBEDDING_MODEL ||
++      configScalar(values.get("embedding_model")) ||
++      (storage.embedding_model ? String(storage.embedding_model) : null) ||
++      expectedWeights;
++    return {
++      provider: "onboard",
++      providerLabel: provider,
++      endpoint: resolveOnboardEndpoint(values, env),
++      token: token || null,
++      model: model ? String(model) : null,
++      expectedDimension: Number.isFinite(expectedDimension) ? expectedDimension : null,
++      expectedWeights: expectedWeights || null,
++      credentialSource: token ? "configured" : "missing",
++    };
++  }
++
+   const configuredKey =
+     env.OMATIC_OPENAI_API_KEY ||
+     env.OPENAI_API_KEY ||
+@@ -1359,6 +1452,8 @@
+     values.get("openai_embedding_base_url") ||
+     DEFAULT_EMBEDDING_BASE_URL;
+   return {
++    provider: "openai",
++    providerLabel: provider || "openai",
+     apiKey: configuredKey || null,
+     model: String(configuredModel || DEFAULT_EMBEDDING_MODEL),
+     baseUrl: String(baseUrl || DEFAULT_EMBEDDING_BASE_URL).replace(/\/+$/, ""),
+@@ -1377,7 +1472,165 @@
+   return `[${values.join(",")}]`;
+ }
+ 
++// Minimal MCP JSON-RPC client. The onboard embedder exposes tools/call only —
++// it has no OpenAI-compatible REST surface (POST /v1/embeddings and /embeddings
++// both 404), so pointing openai_base_url at it cannot work and the transport
++// has to be spoken properly.
++async function onboardMcpCall({ endpoint, token, name, args, timeoutMs }) {
++  if (typeof fetch !== "function") {
++    return { ok: false, reason: "This Node runtime does not expose fetch; Node 18+ is required." };
++  }
++  const controller = new AbortController();
++  const timer = setTimeout(() => controller.abort(), timeoutMs);
++  try {
++    const headers = {
++      "Content-Type": "application/json",
++      // The server negotiates either; sending both matches the reference client
++      // and avoids a 406 on deployments that stream.
++      Accept: "application/json, text/event-stream",
++    };
++    if (token) headers.Authorization = `Bearer ${token}`;
++    const response = await fetch(endpoint, {
++      method: "POST",
++      headers,
++      body: JSON.stringify({
++        jsonrpc: "2.0",
++        id: 1,
++        method: "tools/call",
++        params: { name, arguments: args },
++      }),
++      signal: controller.signal,
++    });
++    const text = await response.text();
++    let payload = {};
++    try {
++      payload = text ? JSON.parse(text) : {};
++    } catch {
++      return {
++        ok: false,
++        reason: `Onboard embedder returned a non-JSON response (HTTP ${response.status}).`,
++      };
++    }
++    if (!response.ok) {
++      const detail =
++        (payload && payload.error && (payload.error.message || payload.error)) || `HTTP ${response.status}`;
++      // 401/403 is the single most likely misconfiguration here, so it is named
++      // rather than folded into a generic transport failure.
++      const hint =
++        response.status === 401 || response.status === 403
++          ? " The onboard embedder rejected the bearer token — set factory_config embedding_api_key (an env: reference is supported) or OMATIC_EMBEDDER_TOKEN."
++          : "";
++      return { ok: false, reason: `Onboard embedder request failed: ${detail}.${hint}` };
++    }
++    if (payload.error) {
++      const message = payload.error.message || JSON.stringify(payload.error);
++      return { ok: false, reason: `Onboard embedder returned a JSON-RPC error: ${message}` };
++    }
++    const result = payload.result;
++    if (!result) {
++      return { ok: false, reason: "Onboard embedder response contained no result." };
++    }
++    if (result.isError) {
++      return { ok: false, reason: `Onboard embedder tool reported an error: ${JSON.stringify(result)}` };
++    }
++    let structured = result.structuredContent;
++    if (!structured && Array.isArray(result.content) && result.content[0] && result.content[0].text) {
++      try {
++        structured = JSON.parse(result.content[0].text);
++      } catch {
++        return { ok: false, reason: "Onboard embedder content was not parseable JSON." };
++      }
++    }
++    if (!structured) {
++      return { ok: false, reason: "Onboard embedder response contained no structured content." };
++    }
++    return { ok: true, structured };
++  } catch (err) {
++    return {
++      ok: false,
++      reason:
++        err && err.name === "AbortError"
++          ? "Onboard embedder request timed out."
++          : `Onboard embedder request failed: ${err && err.message ? err.message : String(err)}`,
++    };
++  } finally {
++    clearTimeout(timer);
++  }
++}
++
++// NOTE ON PREFIXES: the embedder applies search_query:/search_document: itself
++// (health reports prefixConvention, and it was verified empirically — embedding
++// "foo" and "search_query: foo" through embed_query yields cosine 0.9952, not
++// 1.0, i.e. the manual prefix is a SECOND prefix). The plugin must therefore
++// send the raw query. Prefixing here would silently degrade every search.
++async function createOnboardQueryEmbedding({ query, settings, timeoutMs }) {
++  if (!settings.endpoint) {
++    return {
++      ok: false,
++      reason:
++        `Embedding provider "${settings.providerLabel}" is onboard, but no endpoint is configured. ` +
++        "Set factory_config embedding_endpoint (category 'embedding') to the embedder's MCP URL, or set OMATIC_EMBEDDER_URL.",
++    };
++  }
++  const called = await onboardMcpCall({
++    endpoint: settings.endpoint,
++    token: settings.token,
++    name: "embed_query",
++    args: { text: query },
++    timeoutMs,
++  });
++  if (!called.ok) return { ok: false, reason: called.reason };
++
++  const structured = called.structured;
++  const vector = structured.vector || (Array.isArray(structured.vectors) ? structured.vectors[0] : null);
++  if (!Array.isArray(vector) || vector.length === 0) {
++    return { ok: false, reason: "Onboard embedder returned no numeric embedding array." };
++  }
++
++  // Both assertions are FATAL, not fallback-worthy. Searching a corpus with a
++  // vector from a different model or a different width does not degrade
++  // gracefully — pgvector either errors on the dimension or, worse, returns
++  // confident nonsense from an unrelated vector space. Refusing is the only
++  // honest answer, which is why the embedder returns weightsIdentifier at all.
++  const reportedDimension = Number(structured.dimension ?? vector.length);
++  if (settings.expectedDimension && reportedDimension !== settings.expectedDimension) {
++    return {
++      ok: false,
++      fatal: true,
++      reason:
++        `Onboard embedder returned ${reportedDimension} dimensions but this factory's corpus is ` +
++        `${settings.expectedDimension}. Refusing to search rather than query a mismatched vector space.`,
++    };
++  }
++  const reportedWeights = structured.weightsIdentifier ? String(structured.weightsIdentifier) : null;
++  if (settings.expectedWeights && reportedWeights && reportedWeights !== settings.expectedWeights) {
++    return {
++      ok: false,
++      fatal: true,
++      reason:
++        `Onboard embedder is running weights "${reportedWeights}" but this factory's corpus was embedded ` +
++        `with "${settings.expectedWeights}". Refusing to search rather than return results from a ` +
++        "different vector space. Re-embed the corpus or point at the matching embedder.",
++    };
++  }
++
++  return {
++    ok: true,
++    vector,
++    model: reportedWeights || settings.model || settings.providerLabel,
++    dimensions: vector.length,
++    source: "onboard",
++  };
++}
++
+ async function createQueryEmbedding({ query, settings, timeoutMs = 15_000 }) {
++  if (settings && settings.provider === "onboard") {
++    return createOnboardQueryEmbedding({
++      query,
++      settings,
++      timeoutMs: Math.max(timeoutMs, DEFAULT_ONBOARD_TIMEOUT_MS),
++    });
++  }
+   if (!settings.apiKey) {
+     return { ok: false, reason: "No embedding API key configured in env or factory_config." };
+   }
+@@ -1678,7 +1931,7 @@
+           embedding_model: {
+             type: "string",
+             description:
+-              "Optional embedding model override for generated query embeddings. Default comes from factory_config embedding rows or text-embedding-3-small.",
++              "Optional embedding model override for generated query embeddings. Default comes from factory_config embedding rows — the onboard weights identifier when embedding_provider is onboard, otherwise text-embedding-3-small.",
+           },
+         },
+         required: ["query"],
+@@ -2220,7 +2473,7 @@
+       storage:
+         "Factory memory lives in PostgreSQL with pgvector columns on semantic_index and document_chunks plus FTS indexes.",
+       search_tool:
+-        "omatic_search_memory mode=auto generates a query embedding when OPENAI_API_KEY/OMATIC_OPENAI_API_KEY or factory_config embedding credentials are available.",
++        "omatic_search_memory mode=auto generates a query embedding from the provider named by factory_config embedding_provider: an onboard embedder over MCP (embedding_endpoint + embedding_api_key, or OMATIC_EMBEDDER_URL/OMATIC_EMBEDDER_TOKEN), otherwise an OpenAI-compatible key from OPENAI_API_KEY/OMATIC_OPENAI_API_KEY or factory_config.",
+       fallback:
+         "If no embedding credential is available, mode=auto passes NULL::vector and the DB functions use FTS-backed retrieval.",
+       strict_hybrid:
+@@ -3179,6 +3432,24 @@
+           dimensions: generated.dimensions,
+           fallback_reason: null,
+         };
++      } else if (generated.fatal) {
++        // Distinct from "no embedding available". A mismatched vector space is
++        // not a missing capability to fall back from — FTS would return plausible
++        // hits and hide the fact that the factory's vectors and its embedder have
++        // diverged. Refuse in EVERY mode, including auto.
++        return errorResponse(
++          "Refusing to search: the query embedding does not match this factory's corpus.",
++          {
++            retrieval_mode: "refused_vector_space_mismatch",
++            embedding: {
++              used: false,
++              source: "onboard",
++              model: settings.model,
++              dimensions: null,
++              fallback_reason: generated.reason,
++            },
++          }
++        );
+       } else if (mode === "hybrid") {
+         return errorResponse("Hybrid retrieval requested but no query embedding is available.", {
+           retrieval_mode: "hybrid_unavailable",
+@@ -3445,6 +3716,22 @@
+     rows.every((row) => /<=>\s*p_query_vector/i.test(row.definition || ""));
+   const configRows = config.ok ? config.rows : [];
+   const embeddingSettings = embeddingSettingsFromRows(configRows, connections.env());
++  const queryEmbeddingsReady =
++    embeddingSettings.provider === "onboard"
++      ? Boolean(embeddingSettings.endpoint && embeddingSettings.token)
++      : Boolean(embeddingSettings.apiKey);
++  // Naming the missing piece is the difference between "not ready" and an
++  // operator knowing which of two things to go set.
++  const queryEmbeddingsGap =
++    embeddingSettings.provider === "onboard"
++      ? !embeddingSettings.endpoint && !embeddingSettings.token
++        ? "onboard provider is configured but both the endpoint and the bearer token are missing (factory_config embedding_endpoint and embedding_api_key)"
++        : !embeddingSettings.endpoint
++          ? "onboard provider is configured but no endpoint is set (factory_config embedding_endpoint, or OMATIC_EMBEDDER_URL)"
++          : !embeddingSettings.token
++            ? "onboard endpoint is set but no bearer token is available (factory_config embedding_api_key, an env: reference, or OMATIC_EMBEDDER_TOKEN)"
++            : null
++      : "no OpenAI-compatible embedding key in env or factory_config";
+   const indexRows = indexes.ok ? indexes.rows : [];
+   const hnswIndexes = indexRows.filter((row) => /hnsw/i.test(row.indexdef || ""));
+   const ginIndexes = indexRows.filter((row) => /gin/i.test(row.indexdef || ""));
+@@ -3481,15 +3768,28 @@
+     pinned_connection: explicitConnection,
+     scope: scopeReport,
+     embedding_provider: {
+-      plugin_builtin_query_embeddings: Boolean(embeddingSettings.apiKey),
+-      current_query_embedding_source: embeddingSettings.apiKey ? embeddingSettings.credentialSource : null,
++      // Judging readiness by apiKey alone reports an onboard factory as unable
++      // to embed while it is working perfectly — the same false reading that let
++      // FTS-only run unnoticed after a provider migration. Each transport is
++      // asked for what it actually needs.
++      provider: embeddingSettings.provider,
++      provider_label: embeddingSettings.providerLabel,
++      plugin_builtin_query_embeddings: queryEmbeddingsReady,
++      current_query_embedding_source: queryEmbeddingsReady ? embeddingSettings.credentialSource : null,
+       model: embeddingSettings.model,
++      onboard_endpoint_configured:
++        embeddingSettings.provider === "onboard" ? Boolean(embeddingSettings.endpoint) : null,
++      expected_dimension: embeddingSettings.expectedDimension ?? null,
++      expected_weights: embeddingSettings.expectedWeights ?? null,
++      readiness_gap: queryEmbeddingsReady ? null : queryEmbeddingsGap,
+       certainty:
+-        "omatic_search_memory mode=auto can generate query embeddings when an OpenAI-compatible embedding key is configured in env or factory_config; otherwise it falls back to FTS with NULL::vector.",
++        embeddingSettings.provider === "onboard"
++          ? "omatic_search_memory mode=auto generates query embeddings by calling the onboard embedder over MCP; it requires both an endpoint and a bearer token, and refuses to search on a dimension or weights mismatch."
++          : "omatic_search_memory mode=auto can generate query embeddings when an OpenAI-compatible embedding key is configured in env or factory_config; otherwise it falls back to FTS with NULL::vector.",
+     },
+     retrieval_contract: {
+       stored_vectors: "Postgres vector columns on semantic_index and document_chunks",
+-      plugin_search_mode: embeddingSettings.apiKey ? "auto_hybrid_pgvector" : "auto_fts_fallback",
++      plugin_search_mode: queryEmbeddingsReady ? "auto_hybrid_pgvector" : "auto_fts_fallback",
+       hybrid_search_available_if_query_vector_provided: true,
+       db_search_functions_reference_query_vector: vectorBranches,
+       db_search_functions_guard_null_query_vector: nullVectorGuarded,
+@@ -4713,6 +5013,13 @@
+     // #165 — payload scoping (decision #246).
+     scopeFactoryForMode,
+     deriveLoadedSkills,
++    // #155 — onboard embedder query path.
++    configValue,
++    configScalar,
++    resolveOnboardEndpoint,
++    embeddingSettingsFromRows,
++    createQueryEmbedding,
++    createOnboardQueryEmbedding,
+     // #167 — required startup loads (rules #267, #319).
+     loadCommonsState,
+     loadOperatorProfileState,
