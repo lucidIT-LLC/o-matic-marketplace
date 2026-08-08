@@ -8,7 +8,13 @@ const {
 const DEFAULT_MODEL = "text-embedding-3-small";
 const DEFAULT_TENANT = "omatic";
 const DEFAULT_BATCH_SIZE = 50;
-const EXPECTED_DIM = 1536;
+// Defaults only. The live values come from factory_config so a factory can move
+// to a different provider — including an on-device embedder on loopback — without
+// editing this file. tools.js has resolved the base URL from config since 3.x;
+// this worker hardcoded api.openai.com, so one plugin had two behaviours for the
+// same job. KB-0051 v2.0.0 forbids a dimension literal outside factory_config.
+const DEFAULT_EMBEDDING_BASE_URL = "https://api.openai.com/v1";
+const DEFAULT_EMBEDDING_DIM = 1536;
 
 function argValue(name, fallback = null) {
   const prefix = `${name}=`;
@@ -128,14 +134,14 @@ async function fetchRows(connections, name, tenant, tier, limit) {
   );
 }
 
-async function embedTexts(apiKey, model, texts) {
-  const response = await fetch("https://api.openai.com/v1/embeddings", {
+async function embedTexts(settings, texts) {
+  const response = await fetch(`${settings.baseUrl}/embeddings`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${settings.apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ model, input: texts }),
+    body: JSON.stringify({ model: settings.model, input: texts }),
   });
   if (!response.ok) {
     const body = await response.text();
@@ -145,12 +151,13 @@ async function embedTexts(apiKey, model, texts) {
   return data.data.sort((a, b) => a.index - b.index).map((item) => item.embedding);
 }
 
-async function writeEmbeddings(connections, name, tenant, tier, rows, vectors, model) {
+async function writeEmbeddings(connections, name, tenant, tier, rows, vectors, settings) {
+  const { model, expectedDim } = settings;
   const table = tier === "semantic_index" ? "brain.semantic_index" : "brain.document_chunks";
   for (let i = 0; i < rows.length; i += 1) {
     const vector = vectors[i];
-    if (!Array.isArray(vector) || vector.length !== EXPECTED_DIM) {
-      throw new Error(`${tier} row ${rows[i].id}: expected ${EXPECTED_DIM} dimensions, got ${vector?.length || 0}`);
+    if (!Array.isArray(vector) || vector.length !== expectedDim) {
+      throw new Error(`${tier} row ${rows[i].id}: expected ${expectedDim} dimensions, got ${vector?.length || 0}`);
     }
     await connections.query(
       name,
@@ -167,14 +174,14 @@ async function writeEmbeddings(connections, name, tenant, tier, rows, vectors, m
   }
 }
 
-async function embedTier(connections, name, tenant, tier, apiKey, model, limit) {
+async function embedTier(connections, name, tenant, tier, settings, limit) {
   const result = await fetchRows(connections, name, tenant, tier, limit);
   const rows = result.rows || [];
   if (rows.length === 0) return { tier, embedded: 0, remaining: 0 };
 
   const texts = rows.map((row) => String(row.text || "").slice(0, 8000));
-  const vectors = await embedTexts(apiKey, model, texts);
-  await writeEmbeddings(connections, name, tenant, tier, rows, vectors, model);
+  const vectors = await embedTexts(settings, texts);
+  await writeEmbeddings(connections, name, tenant, tier, rows, vectors, settings);
 
   const remainingResult = await fetchRows(connections, name, tenant, tier, 1);
   return { tier, embedded: rows.length, remaining: remainingResult.rows.length };
@@ -185,13 +192,26 @@ async function runOnce(connections, name, options) {
   const configuredKey = await resolveSecretPointer(connections, name, options.tenant, config.openai_api_key);
   const apiKey = process.env.OMATIC_OPENAI_API_KEY || process.env.OPENAI_API_KEY || configuredKey;
   const model = config.openai_embedding_model || DEFAULT_MODEL;
+  // Resolved the same way tools.js resolves it, so the read path and the write
+  // path cannot disagree about where embeddings come from.
+  const baseUrl = String(
+    process.env.OMATIC_OPENAI_BASE_URL ||
+      process.env.OPENAI_BASE_URL ||
+      config.openai_base_url ||
+      config.openai_embedding_base_url ||
+      DEFAULT_EMBEDDING_BASE_URL
+  ).replace(/\/+$/, "");
+  const expectedDim =
+    Number(process.env.OMATIC_EMBEDDING_DIM || config.embedding_dimension || config.embedding_dimensions) ||
+    DEFAULT_EMBEDDING_DIM;
+  const settings = { apiKey, model, baseUrl, expectedDim };
   if (!apiKey) {
     throw new Error("No embedding API key found in OMATIC_OPENAI_API_KEY, OPENAI_API_KEY, factory.factory_config, or factory.config/factory.secrets.");
   }
 
-  const semantic = await embedTier(connections, name, options.tenant, "semantic_index", apiKey, model, options.batchSize);
-  const chunks = await embedTier(connections, name, options.tenant, "document_chunks", apiKey, model, options.batchSize);
-  return { model, semantic, chunks };
+  const semantic = await embedTier(connections, name, options.tenant, "semantic_index", settings, options.batchSize);
+  const chunks = await embedTier(connections, name, options.tenant, "document_chunks", settings, options.batchSize);
+  return { model, baseUrl, expectedDim, semantic, chunks };
 }
 
 async function main() {
