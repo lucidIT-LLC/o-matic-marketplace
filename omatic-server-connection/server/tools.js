@@ -4072,9 +4072,9 @@ function buildProbeTarget(connections, args) {
         database: String(args.database),
         user: String(args.user),
         password: args.password === undefined ? "" : String(args.password),
-        // C3 default matches omatic_add_connection: require, never inferred
-        // from the host address (D5).
-        sslMode: normalizeSslModeArg(args, "require"),
+        // C3 default matches omatic_add_connection: one DEFAULT_SSL_MODE,
+        // never inferred from the host address (D5).
+        sslMode: normalizeSslModeArg(args, DEFAULT_SSL_MODE),
       },
       source: "supplied fields",
     };

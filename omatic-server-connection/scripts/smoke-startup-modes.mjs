@@ -1931,10 +1931,10 @@ const mgr = fakeConnMgr();
 
 const discrete = buildProbeTarget(mgr, { host: "h", database: "d", user: "u", password: "p" });
 ok(discrete.entry.port === 5432, "C3 an unspecified port defaults to 5432");
-ok(discrete.entry.sslMode === "require", "C3 an unspecified ssl_mode defaults to require, never inferred from the host");
+ok(discrete.entry.sslMode === "verify-full", "C3 an unspecified ssl_mode defaults to verify-full, never inferred from the host");
 ok(discrete.source === "supplied fields", "C3 the source of a discrete-field probe is reported");
 ok(
-  buildProbeTarget(mgr, { host: "100.64.1.1", database: "d", user: "u" }).entry.sslMode === "require",
+  buildProbeTarget(mgr, { host: "100.64.1.1", database: "d", user: "u" }).entry.sslMode === "verify-full",
   "C3 a CGNAT/tailnet host does not silently downgrade ssl_mode (D5)"
 );
 ok(

@@ -2,7 +2,7 @@
   "schema": "lucidit-agent-pack-v1",
   "name": "o-matic-marketplace",
   "display_name": "O-Matic Marketplace",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "owner": {
     "name": "lucidIT-LLC",
     "url": "https://github.com/lucidIT-LLC"
@@ -203,6 +203,5 @@
       "stable"
     ],
     "latest": true
-  },
-  "version": "1.1.0"
+  }
 }

@@ -19,6 +19,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: validate JSON and duplicate keys
+        run: node scripts/validate-json.mjs
+      - name: shared skill copies are current
+        run: node scripts/sync-shared-skills.mjs --check
       - name: server smoke suite
         working-directory: omatic-server-connection/server
         run: npm run check
@@ -28,6 +32,12 @@ jobs:
       - name: plugin-root check (the one a human runs)
         working-directory: omatic-server-connection
         run: npm run check
+      - name: wordpress factory check
+        working-directory: o-matic-wordpress-factory
+        run: npm run check
+      - name: high-severity runtime dependency audit
+        working-directory: omatic-server-connection/server
+        run: npm audit --omit=dev --audit-level=high
 
   vendored-deps:
     runs-on: ubuntu-latest

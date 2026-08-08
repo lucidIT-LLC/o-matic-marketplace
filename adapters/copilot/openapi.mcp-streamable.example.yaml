@@ -1,0 +1,18 @@
+swagger: '2.0'
+info:
+  title: O-Matic MCP
+  description: Streamable MCP connector facade for a hosted O-Matic MCP endpoint.
+  version: 1.0.0
+host: example.internal
+basePath: /
+schemes:
+  - https
+paths:
+  /mcp:
+    post:
+      summary: Invoke O-Matic MCP
+      x-ms-agentic-protocol: mcp-streamable-1.0
+      operationId: InvokeMCP
+      responses:
+        '200':
+          description: Success

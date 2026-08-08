@@ -15,7 +15,8 @@ Microsoft Copilot Studio consumes O-Matic tools through MCP connectors, not thro
 2. Expose only the intended MCP endpoint to Copilot Studio.
 3. Keep per-factory credentials in the deployment environment or factory config, not in this repo.
 4. Add the MCP connector to the Copilot Studio agent and disable tools the agent should not use.
+5. Start from `openapi.mcp-streamable.example.yaml` after the hosted bridge exists. The example is not a deployment.
 
 ## Current Status
 
-Copilot support is adapter-ready documentation only. No hosted Copilot connector package is shipped in this repository yet.
+Copilot support is adapter guidance plus MCP connector schema shape. No hosted Copilot connector package is shipped in this repository yet.

@@ -27,8 +27,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: Validate JSON and duplicate keys
+        run: node scripts/validate-json.mjs
       - name: Verify rule #287 alignment
         run: node scripts/version-align.mjs
+      - name: Verify shared skill copies
+        run: node scripts/sync-shared-skills.mjs --check
 
   release:
     needs: verify

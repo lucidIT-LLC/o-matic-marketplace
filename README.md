@@ -57,13 +57,14 @@ Jo is a shared skill. Install standalone `jo` for writing-only work, or install 
 Before release or reinstall, run:
 
 ```
+node scripts/validate-json.mjs
 node scripts/sync-shared-skills.mjs --check
 node scripts/audit-installed-skill-duplicates.mjs
 ```
 
 ## Under the hood
 
-Catalog manifests: `.claude-plugin/marketplace.json` (Claude Code) and `.agents/plugins/marketplace.json` (Codex parity). Host-neutral adapters (Codex, Copilot, Gemini, Ollama) and `agent-pack.json` live alongside for non-Claude hosts. See `docs/HOST-READINESS.md` before adding a new host or changing network assumptions.
+Catalog manifests: `.claude-plugin/marketplace.json` (Claude Code) and `.agents/plugins/marketplace.json` (Codex parity). Host-neutral adapters (Codex, Copilot, Gemini, Ollama) and `agent-pack.json` live alongside for non-Claude hosts. `AGENTS.md`, `GEMINI.md`, and `.github/copilot-instructions.md` give coding agents the repo rules. See `docs/HOST-READINESS.md` before adding a new host or changing network assumptions.
 
 ---
 

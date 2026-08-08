@@ -27,12 +27,12 @@ You are helping the operator add (or update) a database connection in **this pro
    - a full PostgreSQL DSN — `postgresql://user:password@host:port/database`, or
    - discrete fields: `host`, `port` (default 5432), `database`, `user`, `password`, `ssl_mode`.
 
-   `ssl_mode` defaults to `require` and is **never inferred from the host
+   `ssl_mode` defaults to `verify-full` and is **never inferred from the host
    address**. The old behavior guessed `disable` for `100.x` Tailscale hosts;
    that inference was removed because a guessed SSL mode is a silent security
-   decision. If the target needs something other than `require`, ask the
-   operator to state it explicitly — `disable`, `require`, `verify-ca`, or
-   `verify-full`.
+   decision. If the target needs something other than `verify-full`, ask the
+   operator to state it explicitly — `disable`, `allow`, `prefer`, `require`,
+   `verify-ca`, or `verify-full`.
 
    Ask one thing at a time. Keep it conversational.
 

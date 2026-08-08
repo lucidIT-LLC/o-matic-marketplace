@@ -1,0 +1,18 @@
+{
+  "tools": [
+    {
+      "type": "mcp_server",
+      "name": "omatic_server_connection",
+      "url": "https://example.internal/mcp",
+      "headers": {
+        "authorization": "Bearer ${OMATIC_REMOTE_MCP_TOKEN}"
+      },
+      "allowed_tools": [
+        "omatic_factory_startup_run",
+        "omatic_search_memory",
+        "omatic_list_tasks",
+        "omatic_execute_sql"
+      ]
+    }
+  ]
+}

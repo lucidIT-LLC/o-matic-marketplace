@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.6.2 — 2026-08-08
+
+- Fixed `omatic_test_connection` so discrete-field probes use the same
+  `DEFAULT_SSL_MODE` as saved connections. Unsaved tests and saved connections
+  now exercise the same TLS policy.
+- Updated setup docs and smoke assertions to the actual default,
+  `verify-full`, and kept host-address inference removed.
+
 ## 3.6.1 — 2026-08-08
 
 - Added host-readiness guidance for local stdio hosts versus remote MCP hosts, including the limits around local subnet access in Claude/Codex and hosted facades for Copilot/Gemini.

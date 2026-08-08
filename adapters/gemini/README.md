@@ -18,7 +18,8 @@ Compatibility notes:
 - Use snake_case MCP server names for Gemini remote MCP configurations.
 - Keep the active tool set small. Prefer allow-listing the tools needed for the agent.
 - Do not expose private factory databases or local subnet services directly to Gemini. Put the bridge inside the trusted network boundary and expose only the intended MCP endpoint.
+- Start from `remote-mcp.example.json` after the hosted bridge exists. The example is not a deployment.
 
 ## Current Status
 
-Gemini support is adapter-ready documentation and prompt export. No hosted Streamable HTTP bridge is shipped in this repository yet.
+Gemini support is prompt export plus Remote MCP configuration shape. No hosted Streamable HTTP bridge is shipped in this repository yet.
