@@ -1,0 +1,31 @@
+# Code owners for o-matic-marketplace.
+#
+# Named review ownership. This file is what makes a branch-protection rule
+# requiring review enforceable against a specific person rather than "someone".
+# Last match wins, so the privileged paths are listed after the catch-all.
+
+# Everything, by default.
+*                                       @lucid3ye
+
+# The published catalog. A change here alters what every operator installs.
+/.claude-plugin/marketplace.json         @lucid3ye
+/marketplace.json                        @lucid3ye
+/.agents/plugins/marketplace.json        @lucid3ye
+
+# The privileged runtime: opens database connections and executes SQL.
+/omatic-server-connection/server/        @lucid3ye
+/omatic-server-connection/bin/           @lucid3ye
+
+# Vendored dependency tree — this is the shipped runtime, not a build artefact.
+/omatic-server-connection/server/node_modules/    @lucid3ye
+/omatic-server-connection/server/package-lock.json @lucid3ye
+
+# CI and supply-chain integrity gates.
+/.github/                                @lucid3ye
+/scripts/                                @lucid3ye
+
+# Security and compliance posture.
+/SECURITY.md                             @lucid3ye
+/docs/COMPLIANCE.md                      @lucid3ye
+/THIRD-PARTY-NOTICES.md                  @lucid3ye
+/LICENSE                                 @lucid3ye

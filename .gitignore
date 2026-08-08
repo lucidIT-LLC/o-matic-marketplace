@@ -13,3 +13,13 @@ node_modules/
 
 # Built .mcpb bundles — release artifacts, not source.
 dist/
+
+# Credentials must never enter this repository. .omatic/factory.json carries
+# database passwords and lives in an operator's workspace, not here. It has
+# never been committed; these rules make that a control rather than a habit.
+.omatic/
+*.env
+.env.*
+!.env.example
+*.pem
+*.key
