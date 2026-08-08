@@ -84,7 +84,7 @@
     {
       "id": "brandy",
       "display_name": "Brandy",
-      "canonical_skill": "skills/brandy/SKILL.md",
+      "canonical_skill": "skills/wp-factory-brandy/SKILL.md",
       "mode": "brand creator and guardian",
       "version": "7.4.0",
       "release": {
@@ -98,7 +98,7 @@
     {
       "id": "carver",
       "display_name": "Carver",
-      "canonical_skill": "skills/carver/SKILL.md",
+      "canonical_skill": "skills/wp-factory-carver/SKILL.md",
       "mode": "polyglot technical builder",
       "version": "7.4.0",
       "release": {
@@ -127,7 +127,7 @@
     {
       "id": "monet",
       "display_name": "Monet",
-      "canonical_skill": "skills/monet/SKILL.md",
+      "canonical_skill": "skills/wp-factory-monet/SKILL.md",
       "mode": "visual systems designer",
       "version": "4.3.0",
       "release": {

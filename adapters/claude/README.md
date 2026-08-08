@@ -10,9 +10,9 @@ Claude uses the existing `.claude-plugin` manifests:
 
 Canonical prompts remain in:
 
-- `smith/skills/smith/SKILL.md`
+- `smith/skills/crit-o-matic-smith/SKILL.md`
 - `jo/skills/jo/SKILL.md`
-- `tim/skills/tim/SKILL.md`
+- `tim/skills/tool-o-matic-tim/SKILL.md`
 - `rimmer/skills/rimmer/SKILL.md`
 
 Claude Code and Claude desktop marketplace installs should load from those plugin directories. Do not copy behavior into the manifest; the manifest is packaging metadata only.

@@ -43,14 +43,14 @@ VERDICT: [one direct line]
 
 ## Loading
 
-**Claude Cowork / Claude.ai:** Install the O-Matic Consulting Pack marketplace, then activate the Smith plugin. Or load [SKILL.md](skills/smith/SKILL.md) manually as a system prompt.
+**Claude Cowork / Claude.ai:** Install the O-Matic Consulting Pack marketplace, then activate the Smith plugin. Or load [SKILL.md](skills/crit-o-matic-smith/SKILL.md) manually as a system prompt.
 
-**Claude Code:** Place `skills/smith/SKILL.md` in your skills directory or load via the Agent tool:
+**Claude Code:** Place `skills/crit-o-matic-smith/SKILL.md` in your skills directory or load via the Agent tool:
 ```
 Use Smith to stress-test this plan: [paste plan]
 ```
 
-**Codex:** Copy `.agents/` from the repo root into your project, or place `skills/smith/SKILL.md` at `.agents/skills/smith/SKILL.md` manually.
+**Codex:** Copy `.agents/` from the repo root into your project, or place `skills/crit-o-matic-smith/SKILL.md` at `.agents/skills/smith/SKILL.md` manually.
 
 ## Canonical invocation
 

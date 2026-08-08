@@ -55,11 +55,11 @@ fallback: [one-line behavior when unavailable]
 
 ## Loading
 
-**Claude Cowork / Claude.ai:** Install the O-Matic Consulting Pack marketplace, then activate the Tim plugin. Or load [SKILL.md](skills/tim/SKILL.md) manually as a system prompt.
+**Claude Cowork / Claude.ai:** Install the O-Matic Consulting Pack marketplace, then activate the Tim plugin. Or load [SKILL.md](skills/tool-o-matic-tim/SKILL.md) manually as a system prompt.
 
-**Claude Code:** Place `skills/tim/SKILL.md` in your skills directory.
+**Claude Code:** Place `skills/tool-o-matic-tim/SKILL.md` in your skills directory.
 
-**Codex:** Copy `.agents/` from the repo root into your project, or place `skills/tim/SKILL.md` at `.agents/skills/tim/SKILL.md` manually.
+**Codex:** Copy `.agents/` from the repo root into your project, or place `skills/tool-o-matic-tim/SKILL.md` at `.agents/skills/tim/SKILL.md` manually.
 
 ## Canonical invocation
 

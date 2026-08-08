@@ -4,9 +4,9 @@ Google AI Studio, Gemini API, and Gems can use the pack without a platform-speci
 
 Use the selected skill's `SKILL.md` as the system instruction:
 
-- Smith: `smith/skills/smith/SKILL.md`
+- Smith: `smith/skills/crit-o-matic-smith/SKILL.md`
 - Jo: `jo/skills/jo/SKILL.md`
-- Tim: `tim/skills/tim/SKILL.md`
+- Tim: `tim/skills/tool-o-matic-tim/SKILL.md`
 - Rimmer: `rimmer/skills/rimmer/SKILL.md`
 
 To emit the canonical prompt:
