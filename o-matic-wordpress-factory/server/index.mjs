@@ -6,7 +6,7 @@ createConnectorServer({
   serverName: "o-matic-wordpress-connector",
   displayName: "WordPress Factory Connector",
   upstreamLabel: "WordPress MCP",
-  version: "1.2.1",
+  version: "1.2.2",
   toolBase: "wordpress_factory",
   forwardPrefix: "wp__",
   factoryFileName: "wordpress-factory.json",
