@@ -5,11 +5,7 @@
       "args": [
         "${PLUGIN_ROOT}/bin/omatic-launch.sh"
       ],
-      "env": {
-        "OMATIC_PLATFORM": "codex",
-        "OMATIC_PROJECT_ROOT": "${CODEX_WORKSPACE}",
-        "OMATIC_FACTORY_JSON_PATH": "${CODEX_WORKSPACE}/.omatic/factory.json"
-      }
+      "env": {}
     }
   }
 }

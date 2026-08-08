@@ -13,6 +13,7 @@ const {
   VALID_PERMISSIONS,
   DEFAULT_PERMISSION,
   normalizePermission,
+  factoryResolutionReport,
 } = require("./connections.js");
 
 // The usage guide reported a hardcoded "2.1.0" through the whole of 3.0. It is
@@ -2026,10 +2027,62 @@ function buildToolList(connections) {
   return assertToolNamesSafe(published);
 }
 
+// Every tool call funnels through here, so on a host that resolved no factory
+// this is the message the operator sees over and over. It used to be a single
+// dead-end sentence naming no cause and no remedy, which is how a plugin that
+// simply had not been pointed at a project got misdiagnosed as a broken or
+// missing transport. It now reports which root the server resolved, or why it
+// resolved none, and what to type next.
 function connectionName(connections) {
   const name = connections.defaultName();
-  if (!name) throw new Error("No O-Matic Server connection is configured for this project.");
-  return name;
+  if (name) return name;
+
+  const lines = ["No O-Matic Server connection is configured for this project."];
+  let report = null;
+  try {
+    report = factoryResolutionReport(process.env);
+  } catch {
+    // Diagnosis is best-effort; never let it mask the original failure.
+  }
+
+  if (report && report.factory_file) {
+    lines.push(
+      "",
+      `A factory WAS resolved (${report.factory_file}, via ${report.resolved_via}), but it declares no`,
+      "connections. Add one with omatic_add_connection(name=..., host=..., database=..., user=..., password=...).",
+      "It test-connects first; a failed probe writes nothing."
+    );
+  } else {
+    const accepted = report ? report.candidates.filter((c) => c.accepted).length : 0;
+    lines.push(
+      "",
+      "No .omatic/factory.json was resolved, so there is nothing to connect to yet."
+    );
+    if (report && accepted === 0) {
+      // The single most common cause, and the one that reads as a broken
+      // plugin: a host that binds no project directory. Discovery never walks
+      // up the tree (rule #259), so with no bound root there is nothing to find.
+      lines.push(
+        "",
+        "This host bound no usable project directory. Pin the project once:",
+        '  omatic_select_factory(project_root="/absolute/path/to/the/project")',
+        "",
+        `The choice persists to ${report.state_file} and is restored on every later start.`
+      );
+      if (report.state_durable === false) {
+        lines.push(
+          `Warning: state is currently non-durable (${report.state_dir_source}); set OMATIC_STATE_DIR to a real path`,
+          "or the pin will be lost."
+        );
+      }
+      lines.push("", "Roots considered, in precedence order:");
+      for (const candidate of report.candidates) {
+        lines.push(`  - ${candidate.source}: ${candidate.root || "(unset)"} — ${candidate.reason}`);
+      }
+    }
+  }
+
+  throw new Error(lines.join("\n"));
 }
 
 async function q(connections, sql, params = [], explicitConnection = null) {

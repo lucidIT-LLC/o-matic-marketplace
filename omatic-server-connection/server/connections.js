@@ -655,6 +655,33 @@ function unresolvedFactoryError(env = process.env) {
 // ${VAR} patterns in manifest env blocks — the literal string is passed
 // through to the child process. Detect that and treat as unset so the
 // process.cwd() / no-op fallbacks fire instead of resolving to a dead path.
+// ── Host platform detection ──────────────────────────────────────────────────
+//
+// One manifest ships to every host, so the surface cannot be asserted at
+// package time — it has to be observed at spawn. Signals, in order:
+//
+//   codex        any CODEX_* workspace variable is bound
+//   claude-code  the CLI binds CLAUDE_PROJECT_DIR to the open project
+//   cowork       a Claude plugin host that binds no project dir. Cowork runs
+//                the server from a session-scoped scratch directory and leaves
+//                CLAUDE_PROJECT_DIR unset, which is precisely why it needs the
+//                persisted selection written by omatic_select_factory.
+//
+// Returns null when nothing is recognisable, so callers fall through to
+// factory.json rather than getting a confidently wrong label.
+function detectPlatform(env = process.env) {
+  if (
+    resolvedOrNull(env.CODEX_WORKSPACE) ||
+    resolvedOrNull(env.CODEX_PROJECT_ROOT) ||
+    resolvedOrNull(env.CODEX_WORKSPACE_ROOT)
+  ) {
+    return "codex";
+  }
+  if (resolvedOrNull(env.CLAUDE_PROJECT_DIR)) return "claude-code";
+  if (resolvedOrNull(env.CLAUDE_PLUGIN_ROOT) || resolvedOrNull(env.CLAUDE_PLUGIN_DATA)) return "cowork";
+  return null;
+}
+
 function resolvedOrNull(value) {
   if (value === undefined || value === null) return null;
   const str = String(value);
@@ -699,12 +726,18 @@ function loadProjectContext(env = process.env) {
       "omatic"
   );
 
-  // Platform precedence: env wins over factory.json. The env var is set per-
-  // surface by the plugin manifest (claude-code / codex / cowork). The
-  // factory.json value is a default and may go stale when the same file is
-  // shared across surfaces — env is the runtime truth.
+  // Platform precedence: an explicit env override wins, then live host
+  // detection, then factory.json, then the historical default.
+  //
+  // The manifest used to hardcode OMATIC_PLATFORM=codex on every surface, so
+  // Claude Code and Cowork sessions both reported themselves as Codex. A single
+  // manifest cannot know which host launched it, so the value is now detected
+  // from host signals at runtime instead of asserted at package time.
+  // factory.json ranks below detection because one factory.json is shared
+  // across surfaces and its platform_profile goes stale by design.
   const platformProfile =
     resolvedOrNull(env.OMATIC_PLATFORM) ||
+    detectPlatform(env) ||
     factory.platform_profile ||
     factory.platformProfile ||
     "claude-code";
