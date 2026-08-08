@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.7.0 — 2026-08-08
+
+- **Removed the `embed-o-matic-embedder` skill.** The embedding write path is now an
+  external service — Conductor (the on-device Swift worker) or any OpenAI-compatible
+  endpoint named in `factory_config` — so the operating contract no longer belongs in
+  the plugin's skill surface. `skills/embed-o-matic-embedder/` and the `embedder` entry
+  in `agent-pack.json` are gone; the README skill tree and Probot's Embedder Worker
+  Contract section were updated to match.
+- `server/embedder-worker.js` **still ships and is unchanged.** Per the 3.6.0 note it is
+  not retired until 4.0.0. It remains the fallback drain for a factory with no external
+  embedder configured. Removing the skill does not remove the worker.
+- Retirement precondition from 3.6.0 is satisfied and recorded: the Swift worker has
+  drained every database, verified 2026-08-08 by direct count — o-matic 360/381,
+  factory_commons 70/521, benecard 497/452, aboutJimmy 30/117, all on
+  `nomic-embed-text-v1.5@e9b67630`, zero unembedded and zero stale except one
+  chunk written after the drain.
+- Probot skill 14.2.0 → 14.3.0 for the contract wording.
+
 ## 3.6.0 — 2026-08-07
 
 First bridge release toward Factory 4.0 (FA-2026-04 / KB-0422). Additive only — a

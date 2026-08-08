@@ -1,7 +1,7 @@
 {
   "schema": "lucidit-agent-pack-v1",
   "name": "omatic-server-connection",
-  "version": "3.6.0",
+  "version": "3.7.0",
   "display_name": "O-Matic Server Connection",
   "owner": {
     "name": "lucidIT-LLC",
@@ -93,25 +93,11 @@
       }
     },
     {
-      "id": "embedder",
-      "display_name": "Embedder",
-      "canonical_skill": "skills/embed-o-matic-embedder/SKILL.md",
-      "mode": "background embedding worker",
-      "version": "1.0.0",
-      "release": {
-        "channel": "stable",
-        "tags": [
-          "stable"
-        ],
-        "latest": true
-      }
-    },
-    {
       "id": "probot",
       "display_name": "Probot",
       "canonical_skill": "skills/orch-o-matic-probot/SKILL.md",
       "mode": "factory orchestrator",
-      "version": "14.2.0",
+      "version": "14.3.0",
       "release": {
         "channel": "stable",
         "tags": [

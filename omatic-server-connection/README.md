@@ -57,7 +57,6 @@ omatic-server-connection/
   .mcp.json            # Codex MCP server config
   skills/
     omatic-server-connection/SKILL.md  # generic plugin operating guide
-    embed-o-matic-embedder/SKILL.md    # Embedder background worker
     orch-o-matic-probot/SKILL.md   # Probot v14.2 — orchestrator + memory governance
     data-o-matic-data/SKILL.md     # Data v5.1 — analyst, architect + lifecycle health
     find-o-matic-fred/SKILL.md     # Fred v9.2 — storage, provenance + connection CRUD
