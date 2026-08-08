@@ -7,6 +7,9 @@
   now exercise the same TLS policy.
 - Updated setup docs and smoke assertions to the actual default,
   `verify-full`, and kept host-address inference removed.
+- Documented TailRunner as the follow-on runtime bridge for simplifying local,
+  LAN, tailnet, and remote-host usage without turning every marketplace plugin
+  into a network daemon.
 
 ## 3.6.1 — 2026-08-08
 
