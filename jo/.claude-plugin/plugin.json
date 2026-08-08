@@ -13,12 +13,5 @@
     "creative-writing",
     "business-writing",
     "editing"
-  ],
-  "release": {
-    "channel": "stable",
-    "tags": [
-      "stable"
-    ],
-    "latest": true
-  }
+  ]
 }

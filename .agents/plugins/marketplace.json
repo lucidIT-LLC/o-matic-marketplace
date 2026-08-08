@@ -20,13 +20,6 @@
       },
       "homepage": "https://o-matic.ai",
       "category": "Productivity",
-      "release": {
-        "channel": "stable",
-        "tags": [
-          "stable"
-        ],
-        "latest": true
-      },
       "tags": [
         "stable"
       ]
@@ -38,13 +31,6 @@
       "description": "Critical Analyst. Smith stress-tests plans, copy, architecture, and assumptions. Cold, surgical, adversarial. Pre-mortems, assumption attacks, factory audits.",
       "author": {
         "name": "James Walker / LucidIT"
-      },
-      "release": {
-        "channel": "stable",
-        "tags": [
-          "stable"
-        ],
-        "latest": true
       },
       "tags": [
         "stable"
@@ -58,13 +44,6 @@
       "author": {
         "name": "James Walker / LucidIT"
       },
-      "release": {
-        "channel": "stable",
-        "tags": [
-          "stable"
-        ],
-        "latest": true
-      },
       "tags": [
         "stable"
       ]
@@ -77,13 +56,6 @@
       "author": {
         "name": "James Walker / LucidIT"
       },
-      "release": {
-        "channel": "stable",
-        "tags": [
-          "stable"
-        ],
-        "latest": true
-      },
       "tags": [
         "stable"
       ]
@@ -95,13 +67,6 @@
       "description": "Evidence-first evaluator for O-Matic skills, agents, factory workflows, and plugin releases.",
       "author": {
         "name": "James Walker / LucidIT"
-      },
-      "release": {
-        "channel": "stable",
-        "tags": [
-          "stable"
-        ],
-        "latest": true
       },
       "tags": [
         "stable"
@@ -118,13 +83,6 @@
       },
       "homepage": "https://o-matic.ai",
       "category": "Productivity",
-      "release": {
-        "channel": "stable",
-        "tags": [
-          "stable"
-        ],
-        "latest": true
-      },
       "tags": [
         "stable"
       ]

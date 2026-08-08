@@ -14,12 +14,5 @@
     "portability",
     "claude-code",
     "codex"
-  ],
-  "release": {
-    "channel": "stable",
-    "tags": [
-      "stable"
-    ],
-    "latest": true
-  }
+  ]
 }
