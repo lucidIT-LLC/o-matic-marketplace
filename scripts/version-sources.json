@@ -45,6 +45,18 @@
           "label": "server/package.json"
         },
         {
+          "type": "json",
+          "path": "omatic-server-connection/server/package-lock.json",
+          "field": "version",
+          "label": "server/package-lock.json"
+        },
+        {
+          "type": "json",
+          "path": "omatic-server-connection/server/package-lock.json",
+          "field": "packages..version",
+          "label": "server/package-lock root package version"
+        },
+        {
           "type": "regex",
           "path": "omatic-server-connection/skills/omatic-server-operating-guide/SKILL.md",
           "pattern": "<!--\\s*version:\\s*([^\\s|]+)",

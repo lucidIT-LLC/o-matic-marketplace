@@ -6,7 +6,9 @@ Adapters are thin host packaging layers:
 
 - `claude/` explains Claude marketplace and skill loading.
 - `codex/` explains Codex plugin and `.agents/skills` loading.
-- `google/` explains Gemini / Google AI Studio / Gems usage.
+- `copilot/` explains Microsoft Copilot Studio MCP readiness and current packaging limits.
+- `gemini/` explains Gemini Remote MCP readiness and current packaging limits.
+- `google/` explains Gemini / Google AI Studio / Gems prompt-only usage.
 - `ollama/` explains local Modelfile usage.
 - `generic/` explains any chat runtime that accepts a system prompt.
 

@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "omatic-server-connection",
   "display_name": "O-Matic Server Connection",
-  "version": "3.6.0",
+  "version": "3.6.1",
   "description": "Connects a host to an O-Matic Server factory brain and ships Probot, Fred, Data and Embedder.",
   "long_description": "The MCP server that connects Claude Desktop to an O-Matic Server. One install serves many factories through a per-project .omatic/factory.json. Ships the Probot (orchestrator), Fred (storage and connection CRUD), Data (analyst and DBA) and Embedder (background vector refresh) skills. Connects to a factory brain; does not bundle a database.",
   "author": {
@@ -41,7 +41,7 @@
     "project_root": {
       "type": "directory",
       "title": "Factory project folder",
-      "description": "The folder containing .omatic/factory.json. This replaces the ${CLAUDE_PROJECT_DIR} variable used by the plugin build, which the desktop host does not expand \u2014 asking you for the path is the only way this host can know it.",
+      "description": "The folder containing .omatic/factory.json. This replaces the ${CLAUDE_PROJECT_DIR} variable used by the plugin build, which the desktop host does not expand — asking you for the path is the only way this host can know it.",
       "required": true
     },
     "node_path": {

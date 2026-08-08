@@ -33,17 +33,17 @@ claude plugin marketplace add lucidIT-LLC/o-matic-marketplace
 
 | Plugin | Install | Who shows up |
 |---|---|---|
-| **omatic-server-connection** | `omatic-server-connection@o-matic.ai` | The connection to an O-Matic Server — and **Probot** (orchestrator), **Fred** (files + connections), **Data** (analyst + DBA). |
-| **o-matic-wordpress-factory** | `o-matic-wordpress-factory@o-matic.ai` | Brand, build, write, ship websites — **Brandy, Carver, Monet, Jo** + live WordPress &amp; Elementor connectors. |
-| **smith** | `smith@o-matic.ai` | **Critical Analyst.** Stress-tests the plan before reality does. Cold, surgical, fair. |
-| **jo** | `jo@o-matic.ai` | **Writing Coach.** Structure, voice, the works. |
-| **tim** | `tim@o-matic.ai` | **Tool Optimizer.** Audits your MCP connectors and tells you what you actually have. |
-| **rimmer** | `rimmer@o-matic.ai` | **Agent Evaluator.** Evidence-first evals for skills and agents. |
+| **omatic-server-connection** | `omatic-server-connection@o-matic-marketplace` | The connection to an O-Matic Server — and **Probot** (orchestrator), **Fred** (files + connections), **Data** (analyst + DBA). |
+| **o-matic-wordpress-factory** | `o-matic-wordpress-factory@o-matic-marketplace` | Brand, build, write, ship websites — **Brandy, Carver, Monet, Jo** + live WordPress &amp; Elementor connectors. |
+| **smith** | `smith@o-matic-marketplace` | **Critical Analyst.** Stress-tests the plan before reality does. Cold, surgical, fair. |
+| **jo** | `jo@o-matic-marketplace` | **Writing Coach.** Structure, voice, the works. |
+| **tim** | `tim@o-matic-marketplace` | **Tool Optimizer.** Audits your MCP connectors and tells you what you actually have. |
+| **rimmer** | `rimmer@o-matic-marketplace` | **Agent Evaluator.** Evidence-first evals for skills and agents. |
 
 Install any one:
 
 ```
-claude plugin install smith@o-matic.ai
+claude plugin install smith@o-matic-marketplace
 ```
 
 ## Self-contained
@@ -63,7 +63,7 @@ node scripts/audit-installed-skill-duplicates.mjs
 
 ## Under the hood
 
-Catalog manifests: `.claude-plugin/marketplace.json` (Claude Code) and `.agents/plugins/marketplace.json` (Codex parity). Host-neutral adapters (Codex, Gemini, Ollama) and `agent-pack.json` live alongside for non-Claude hosts.
+Catalog manifests: `.claude-plugin/marketplace.json` (Claude Code) and `.agents/plugins/marketplace.json` (Codex parity). Host-neutral adapters (Codex, Copilot, Gemini, Ollama) and `agent-pack.json` live alongside for non-Claude hosts. See `docs/HOST-READINESS.md` before adding a new host or changing network assumptions.
 
 ---
 

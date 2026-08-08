@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.2 — 2026-08-08
+
+- Synced the bundled Jo skill back to standalone Jo 4.0.2.
+- Changed Claude plugin profile placeholders and example configs so project-level WordPress/Elementor profiles are inherited instead of being forced to `default`.
+- Added Copilot/Gemini host-readiness docs and versioned the plugin forward for a marketplace cleanup release.
+
 ## 1.2.1 — 2026-08-07
 
 - Both connectors' plugin.json `mcpServers` return to `command: "node"` with direct `server/*.mjs` entries. The `/bin/sh` + `bin/omatic-wp-launch.sh` form is refused by the claude.ai marketplace ingest (same class as omatic-server-connection 3.5.1), which silently pinned Claude Desktop at 1.1.1. The shell launcher remains in `bin/` for `.mcpb`-style packaging.

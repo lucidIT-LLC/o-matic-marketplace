@@ -7,7 +7,8 @@ version-change detection: the manifest version is *desired state*, the set of gi
 ## Source of truth
 
 Each plugin's version is **canonical in the marketplace catalog entry** (`marketplace.json`,
-mirrored byte-for-byte in `.claude-plugin/marketplace.json`). Every other place a version
+mirrored byte-for-byte in `.claude-plugin/marketplace.json` and
+`.agents/plugins/marketplace.json`). Every other place a version
 appears — `plugin.json`, `package.json`, `server/package.json`, and hardcoded runtime
 constants — must equal the catalog. That alignment requirement is **rule #287**.
 
@@ -32,7 +33,8 @@ not see it.
 1. Bump the plugin's version in **the catalog** (`marketplace.json` **and**
    `.claude-plugin/marketplace.json` — keep them identical).
 2. Bump every other source for that plugin to match (`plugin.json`, `package.json`,
-   `server/package.json`, runtime constants). Run `node scripts/version-align.mjs` until green.
+   `server/package.json`, package lockfiles, runtime constants). Run
+   `node scripts/version-align.mjs` until green.
 3. Open a PR. `verify-versions` must pass (it will fail on any drift or a downward bump).
 4. Merge to `stable`. `release.yml` runs the gate again, then cuts the immutable
    `<plugin>-vX.Y.Z` tag and publishes the Release. Already-released versions are skipped.

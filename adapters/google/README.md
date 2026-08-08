@@ -1,6 +1,6 @@
-# Google / Gemini Adapter
+# Google / Gemini Prompt Adapter
 
-Google AI Studio, Gemini API, and Gems can use the pack without a platform-specific package format.
+Google AI Studio, Gemini API, and Gems can use the pack without a platform-specific package format when the task only needs the skill prompt. For Gemini Remote MCP, use `adapters/gemini/README.md`.
 
 Use the selected skill's `SKILL.md` as the system instruction:
 

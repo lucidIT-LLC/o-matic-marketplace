@@ -1,15 +1,16 @@
 {
   "schema": "lucidit-agent-pack-v1",
-  "name": "o-matic-consulting-pack",
-  "display_name": "O-Matic Consulting Pack",
+  "name": "o-matic-marketplace",
+  "display_name": "O-Matic Marketplace",
+  "version": "1.0.0",
   "owner": {
     "name": "lucidIT-LLC",
     "url": "https://github.com/lucidIT-LLC"
   },
-  "homepage": "https://o-matic.io",
-  "repository": "https://github.com/lucidIT-LLC/o-matic-consulting-pack",
+  "homepage": "https://o-matic.ai",
+  "repository": "https://github.com/lucidIT-LLC/o-matic-marketplace",
   "license": "MIT",
-  "description": "Host-neutral expert AI skills for critique, writing coaching, tool optimization, and evaluation.",
+  "description": "Host-neutral catalog for O-Matic runtime connectors, factory skills, and host adapters.",
   "canonical_format": {
     "type": "markdown_skill",
     "entry_file": "SKILL.md",
@@ -38,6 +39,14 @@
     "google": {
       "type": "system_instruction",
       "notes": "Use the selected SKILL.md body as the model system instruction in Gemini/Google AI Studio/Gems. Preserve trigger, voice, lane, and output-contract sections. scripts/print-system-prompt.mjs emits the canonical prompt."
+    },
+    "gemini": {
+      "type": "remote_mcp_or_system_instruction",
+      "notes": "Prompt-only use is supported through the Google adapter. Remote MCP requires a Streamable HTTP MCP facade and snake_case server/tool naming; see adapters/gemini/README.md."
+    },
+    "copilot": {
+      "type": "mcp_connector_readiness",
+      "notes": "Copilot Studio consumes MCP servers through a connector/policy layer. This repo provides readiness guidance; a hosted Streamable HTTP facade is required for runtime connectors."
     },
     "ollama": {
       "type": "modelfile_system_prompt",

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
+const { Server } = require("@modelcontextprotocol/sdk/server");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const {
   ListToolsRequestSchema,
@@ -33,7 +33,7 @@ const {
 // A literal on purpose: version-align.mjs (rule #287, source (f)) greps this
 // exact pattern and fails CI unless it equals the canonical catalog version, so
 // the runtime version cannot silently drift from what marketplace.json ships.
-const PLUGIN_VERSION = "3.6.0";
+const PLUGIN_VERSION = "3.6.1";
 
 // `--version` must answer and exit. It previously fell through to main(), which
 // booted the whole server, resolved a factory, and only exited when stdin closed

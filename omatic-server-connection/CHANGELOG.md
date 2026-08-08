@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.6.1 — 2026-08-08
+
+- Added host-readiness guidance for local stdio hosts versus remote MCP hosts, including the limits around local subnet access in Claude/Codex and hosted facades for Copilot/Gemini.
+- Added `server/package-lock.json` version fields to the rule #287 alignment gate so lockfile drift is caught before release.
+- Versioned the runtime plugin forward after the Claude/Codex marketplace cache resync work.
+
 ## 3.6.0 — 2026-08-07
 
 First bridge release toward Factory 4.0 (FA-2026-04 / KB-0422). Additive only — a

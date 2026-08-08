@@ -1,6 +1,6 @@
 {
   "name": "o-matic-wordpress-factory",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "O-Matic WordPress Factory plugin with bundled brand, build, writing, and visual skills plus separate configurable WordPress and Elementor MCP connectors.",
   "author": {
     "name": "James Walker",
@@ -24,7 +24,7 @@
       "env": {
         "OMATIC_PROJECT_ROOT": "${CLAUDE_PROJECT_DIR}",
         "OMATIC_WORDPRESS_FACTORY_CONFIG": "${OMATIC_WORDPRESS_FACTORY_CONFIG}",
-        "OMATIC_WORDPRESS_FACTORY_PROFILE": "default",
+        "OMATIC_WORDPRESS_FACTORY_PROFILE": "${OMATIC_WORDPRESS_FACTORY_PROFILE}",
         "OMATIC_WP_URL": "${OMATIC_WP_URL}",
         "OMATIC_WP_USERNAME": "${OMATIC_WP_USERNAME}",
         "OMATIC_WP_APP_PASSWORD": "${OMATIC_WP_APP_PASSWORD}",
@@ -42,7 +42,7 @@
       "env": {
         "OMATIC_PROJECT_ROOT": "${CLAUDE_PROJECT_DIR}",
         "OMATIC_ELEMENTOR_FACTORY_CONFIG": "${OMATIC_ELEMENTOR_FACTORY_CONFIG}",
-        "OMATIC_ELEMENTOR_FACTORY_PROFILE": "default",
+        "OMATIC_ELEMENTOR_FACTORY_PROFILE": "${OMATIC_ELEMENTOR_FACTORY_PROFILE}",
         "OMATIC_ELEMENTOR_URL": "${OMATIC_ELEMENTOR_URL}",
         "OMATIC_ELEMENTOR_USERNAME": "${OMATIC_ELEMENTOR_USERNAME}",
         "OMATIC_ELEMENTOR_APP_PASSWORD": "${OMATIC_ELEMENTOR_APP_PASSWORD}",

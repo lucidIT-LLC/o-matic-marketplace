@@ -25,21 +25,17 @@ const dryRun = args.has("--dry-run");
 const check = args.has("--check");
 
 // `source` is the canonical SKILL.md inside THIS marketplace repo.
-// `consumers` are paths RELATIVE TO THE WORKSPACE PLUGINS ROOT (repoRoot/..).
+// `consumers` are paths RELATIVE TO this marketplace repo.
 const SHARED = [
   {
     name: "jo",
     source: join(repoRoot, "jo", "skills", "jo", "SKILL.md"),
     consumers: [
-      // wp-factory carries a source copy (top-level) AND the packaged plugin copy
-      // (nested under plugins/) that the marketplace actually ships. Both track canonical.
       "o-matic-wordpress-factory/skills/jo/SKILL.md",
-      "o-matic-wordpress-factory/plugins/o-matic-wordpress-factory/skills/jo/SKILL.md",
     ],
   },
 ];
 
-const pluginsRoot = resolve(repoRoot, "..");
 let stale = 0;
 
 for (const skill of SHARED) {
@@ -50,7 +46,7 @@ for (const skill of SHARED) {
   }
   const canonical = readFileSync(skill.source);
   for (const rel of skill.consumers) {
-    const target = resolve(pluginsRoot, rel);
+    const target = resolve(repoRoot, rel);
     const current = existsSync(target) ? readFileSync(target) : null;
     if (current && current.equals(canonical)) {
       console.log(`ok:    ${skill.name} -> ${rel} (in sync)`);
