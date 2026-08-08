@@ -18,10 +18,10 @@ The plugin packages configurable MCP connector access so each project can point 
 Brandy, Carver, Jo, and Monet are the bundled skills in this repository:
 
 ```text
-skills/brandy/SKILL.md
-skills/carver/SKILL.md
+skills/wp-factory-brandy/SKILL.md
+skills/wp-factory-carver/SKILL.md
 skills/jo/SKILL.md
-skills/monet/SKILL.md
+skills/wp-factory-monet/SKILL.md
 ```
 
 Brandy is the brand creator and guardian. She owns brand voice, messaging, naming, claim discipline, visual brand implications, brand styling passes, theme selection and generation, brand onboarding, and brand gates. For O-Matic work she carries the Factory 2.0 updates: brand locks, authority tiers, no-overclaim doctrine, AO language, compatibility-tier caution, and DB/Brand Book source order. She can apply active-brand colors, typography, contrast, accent use, and fallback fonts to artifacts without importing another company's brand tokens. She can also offer theme families or create a custom theme for unbranded or exploratory artifacts, but themes do not override an active brand source. She stays warm and sharp, not generic-marketing polite.

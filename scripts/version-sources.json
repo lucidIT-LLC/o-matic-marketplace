@@ -130,7 +130,7 @@
         },
         {
           "type": "regex",
-          "path": "smith/skills/smith/SKILL.md",
+          "path": "smith/skills/crit-o-matic-smith/SKILL.md",
           "pattern": "<!--\\s*version:\\s*([^\\s|]+)",
           "label": "smith SKILL.md header"
         }
@@ -184,7 +184,7 @@
         },
         {
           "type": "regex",
-          "path": "tim/skills/tim/SKILL.md",
+          "path": "tim/skills/tool-o-matic-tim/SKILL.md",
           "pattern": "<!--\\s*version:\\s*([^\\s|]+)",
           "label": "tim SKILL.md header"
         }

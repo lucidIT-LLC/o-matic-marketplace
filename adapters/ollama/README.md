@@ -20,9 +20,9 @@ node scripts/build-ollama-modelfile.mjs smith llama3.1:8b > Smith.Modelfile
 
 Recommended source prompts:
 
-- Smith: `smith/skills/smith/SKILL.md`
+- Smith: `smith/skills/crit-o-matic-smith/SKILL.md`
 - Jo: `jo/skills/jo/SKILL.md`
-- Tim: `tim/skills/tim/SKILL.md`
+- Tim: `tim/skills/tool-o-matic-tim/SKILL.md`
 - Rimmer: `rimmer/skills/rimmer/SKILL.md`
 
 Build example:
