@@ -13,12 +13,5 @@
     "skills",
     "agents",
     "release-gate"
-  ],
-  "release": {
-    "channel": "stable",
-    "tags": [
-      "stable"
-    ],
-    "latest": true
-  }
+  ]
 }

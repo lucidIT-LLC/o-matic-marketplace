@@ -39,12 +39,5 @@
       "Document this connector from the live schema."
     ],
     "brandColor": "#00B5AD"
-  },
-  "release": {
-    "channel": "stable",
-    "tags": [
-      "stable"
-    ],
-    "latest": true
   }
 }

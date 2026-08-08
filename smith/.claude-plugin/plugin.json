@@ -12,12 +12,5 @@
     "assumption-attack",
     "factory-audit",
     "architecture-review"
-  ],
-  "release": {
-    "channel": "stable",
-    "tags": [
-      "stable"
-    ],
-    "latest": true
-  }
+  ]
 }

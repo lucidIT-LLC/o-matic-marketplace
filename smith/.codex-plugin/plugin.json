@@ -37,12 +37,5 @@
       "Find what is wrong with this copy."
     ],
     "brandColor": "#00B5AD"
-  },
-  "release": {
-    "channel": "stable",
-    "tags": [
-      "stable"
-    ],
-    "latest": true
   }
 }

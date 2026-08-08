@@ -52,12 +52,5 @@
       "List available WordPress and Elementor MCP tools."
     ],
     "brandColor": "#00B5AD"
-  },
-  "release": {
-    "channel": "stable",
-    "tags": [
-      "stable"
-    ],
-    "latest": true
   }
 }
