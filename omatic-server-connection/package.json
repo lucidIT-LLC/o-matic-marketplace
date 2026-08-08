@@ -5,7 +5,7 @@
   "description": "O-Matic Server Connection plugin package for Codex and Claude Code.",
   "type": "commonjs",
   "scripts": {
-    "check": "node scripts/smoke-startup-modes.mjs && node scripts/smoke-codex-plugin.mjs && node scripts/smoke-runtime-degrade.mjs && node --check server/embedder-worker.js && node server/index.js --version"
+    "check": "node scripts/smoke-startup-modes.mjs && node scripts/smoke-codex-plugin.mjs && node scripts/smoke-platform-detect.mjs && node scripts/smoke-runtime-degrade.mjs && node --check server/embedder-worker.js && node server/index.js --version"
   },
   "engines": {
     "node": ">=18"

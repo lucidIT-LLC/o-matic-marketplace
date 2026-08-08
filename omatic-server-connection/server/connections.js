@@ -667,6 +667,13 @@ function unresolvedFactoryError(env = process.env) {
 //                CLAUDE_PROJECT_DIR unset, which is precisely why it needs the
 //                persisted selection written by omatic_select_factory.
 //
+// "claude-desktop" is deliberately absent from this vocabulary. The .mcpb
+// desktop-extension build sets OMATIC_PLATFORM=claude-desktop explicitly in its
+// manifest, and an explicit value outranks detection — so that surface never
+// reaches this function. Cowork and Claude Desktop are otherwise not separable
+// from the environment, and inventing a distinction the env cannot support is
+// how the previous label became untrustworthy in the first place.
+//
 // Returns null when nothing is recognisable, so callers fall through to
 // factory.json rather than getting a confidently wrong label.
 function detectPlatform(env = process.env) {
@@ -735,12 +742,17 @@ function loadProjectContext(env = process.env) {
   // from host signals at runtime instead of asserted at package time.
   // factory.json ranks below detection because one factory.json is shared
   // across surfaces and its platform_profile goes stale by design.
-  const platformProfile =
-    resolvedOrNull(env.OMATIC_PLATFORM) ||
-    detectPlatform(env) ||
-    factory.platform_profile ||
-    factory.platformProfile ||
-    "claude-code";
+  // The VALUE alone is unfalsifiable: factory.json pins platform_profile to a
+  // literal, so a reader cannot tell a detected surface from a string somebody
+  // typed months ago. Report where it came from, the same way state_dir_source
+  // qualifies state_file.
+  const platformCandidates = [
+    ["OMATIC_PLATFORM", resolvedOrNull(env.OMATIC_PLATFORM)],
+    ["host detection", detectPlatform(env)],
+    ["factory.json", factory.platform_profile || factory.platformProfile || null],
+    ["default", "claude-code"],
+  ];
+  const [platformSource, platformProfile] = platformCandidates.find(([, v]) => v);
 
   return {
     factory_id: factoryId,
@@ -753,6 +765,7 @@ function loadProjectContext(env = process.env) {
     factory_file: factoryFile,
     project_file: projectFile,
     platform_profile: platformProfile,
+    platform_profile_source: platformSource,
     connection_profile: factory.connection_profile || factory.connectionProfile || "default",
     database_url: factory.database_url || factory.databaseUrl || null,
     connections: Array.isArray(factory.connections) ? factory.connections : null,
