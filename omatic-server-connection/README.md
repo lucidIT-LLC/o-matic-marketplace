@@ -27,8 +27,8 @@ node scripts/print-system-prompt.mjs probot
 node scripts/build-ollama-modelfile.mjs probot llama3.1:8b > Probot.Modelfile
 node scripts/sync-bundled-skills.mjs --dry-run
 node scripts/sync-bundled-skills.mjs
-OMATIC_PROJECT_ROOT=/path/to/factory node server/embedder-worker.js
-OMATIC_PROJECT_ROOT=/path/to/factory node server/embedder-worker.js --watch
+OMATIC_PROJECT_ROOT=/path/to/factory node scripts/embed-drain.mjs
+OMATIC_PROJECT_ROOT=/path/to/factory node scripts/embed-drain.mjs --watch
 ```
 
 `sync-bundled-skills.mjs` installs missing bundled skills into
@@ -62,7 +62,6 @@ omatic-server-connection/
     find-o-matic-fred/SKILL.md     # Fred v9.2 — storage, provenance + connection CRUD
   server/              # bundled Node MCP server
     index.js
-    embedder-worker.js
     connections.js
     tools.js
     package.json

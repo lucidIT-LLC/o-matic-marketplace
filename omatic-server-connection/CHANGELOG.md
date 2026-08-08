@@ -1,5 +1,85 @@
 # Changelog
 
+## 4.0.0 — 2026-08-08
+
+### Breaking
+
+- **`server/embedder-worker.js` is retired**, as promised since 3.6.0. It was not
+  merely unused — on this factory it could never have worked. It resolves its
+  endpoint, model and key from `factory_config` keys `openai_base_url`,
+  `openai_embedding_model` and `openai_api_key`, and the on-device migration
+  replaced those with `embedding_endpoint`, `embedding_model_identity` and
+  `embedding_api_key`. Finding none of its keys, it fell back to
+  `https://api.openai.com/v1` and drained nothing, silently, while remaining the
+  documented fallback. Measured 2026-08-08: five decision records sat unembedded
+  for four hours with the worker present and nominally responsible.
+- Replacement is **`scripts/embed-drain.mjs`**. It reads the provider actually
+  named in `factory_config`, speaks its MCP JSON-RPC shape, and covers **both**
+  tiers — `semantic_index.summary_text` and `document_chunks.content`. A
+  Tier-1-only drain leaves deep retrieval permanently behind and is a standing
+  audit failure.
+- `npm run check` now syntax-checks `scripts/embed-drain.mjs` in place of the
+  removed worker. Callers invoking `node server/embedder-worker.js` must switch to
+  `node scripts/embed-drain.mjs`; `--watch`, `--interval-ms`, `--connection`,
+  `--tenant` and `--batch-size` are unchanged, and `--dry-run` is new.
+
+### Added
+
+- The drain **refuses to write on a weights or dimension mismatch**, re-checked per
+  row rather than once at startup, because a provider restarted mid-drain can come
+  back on different weights. Mixing weights in one column poisons a corpus
+  silently: every search still returns rows, just the wrong ones.
+- The drain **localizes its endpoint at runtime**. `factory_config` holds one
+  absolute address, but the correct address depends on where the caller runs — the
+  tailnet address is required from another machine and is an unroutable hairpin
+  from the provider's own host. Measured: identical config timed out from the
+  Studio and answered in 2 ms on loopback. Rather than pin a host-specific value in
+  shared config, the drain detects whether the endpoint host is one of its own
+  interface addresses and rewrites to loopback when it is.
+- `platform_profile_source` on every `omatic_resolve_factory` response — one of
+  `OMATIC_PLATFORM`, `host detection`, `factory.json`, `default`. The value alone
+  was unfalsifiable: `factory.json` pins `platform_profile` to a literal, so a
+  reader could not distinguish a detected surface from a string typed months ago.
+- `scripts/smoke-platform-detect.mjs`, 18 assertions over the four host shapes and
+  the three precedence branches, wired into `npm run check`.
+
+### Fixed
+
+- **The plugin manifests no longer assert a host.** One `.mcp.json` ships to Codex,
+  Claude Code and Cowork, and it hardcoded `OMATIC_PLATFORM=codex` plus
+  `OMATIC_PROJECT_ROOT=${CODEX_WORKSPACE}` and
+  `OMATIC_FACTORY_JSON_PATH=${CODEX_WORKSPACE}/.omatic/factory.json` — a variable
+  only Codex binds, occupying the two highest-precedence root slots.
+  `connections.js` already documented the intended contract as "set per-surface by
+  the plugin manifest", which no manifest can satisfy at package time. The surface
+  is now derived at spawn by `detectPlatform()`; Codex is unaffected because the
+  candidate ladder already handles `CODEX_WORKSPACE` natively.
+- The same Codex-only root binding is removed from the WordPress and Elementor
+  connector manifests. Their credential passthroughs stay: `mcp-connector.mjs`
+  already ignores unexpanded `${VAR}` literals and has a self-test for it, so a
+  desktop safelist that declines to expand them degrades to the stored profile.
+- `connectionName()` threw one dead-end sentence naming no cause and no remedy.
+  Every tool call funnels through it, so on a host that resolved no factory that
+  sentence was the entire diagnosis — which is how a plugin that had merely not
+  been pointed at a project was read as a broken transport. It now reports the
+  resolved root or why there was none, names `omatic_select_factory`, and lists
+  every root considered.
+- `smoke-codex-plugin.mjs` asserted the defect: it required
+  `OMATIC_PLATFORM=codex`. It now asserts that no host-specific key is hardcoded.
+
+### Known gaps
+
+- **An embedding endpoint is not a drain.** Nothing polls for stale rows on a
+  schedule; the 2026-08-08 recovery was run by hand. Until something owns the
+  poll, the corpus goes stale silently while every search keeps answering. Task
+  **#210**.
+- **Conductor mints a new bearer token on every launch** and nothing propagates
+  it — not the shell environment, not `${CONDUCTOR_TOKEN}` in `.mcp.json`. Every
+  restart breaks the embedder until the new token is copied by hand.
+- **No Desktop Extension is published**, so Cowork still has nothing to install.
+  `scripts/build-mcpb.mjs` works and is wired into nothing;
+  `o-matic-wordpress-factory` has no `manifest.json` at all. Task **#208**.
+
 ## 3.7.0 — 2026-08-08
 
 - **Removed the `embed-o-matic-embedder` skill.** The embedding write path is now an
