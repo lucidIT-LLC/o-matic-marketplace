@@ -3035,16 +3035,40 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
     }),
   ];
   for (const probe of measuredProbes) {
+    // ── #202: resolve the registry id through per-factory DATA, not naming
+    // convention. The derived `omatic-server-{name}` identity is honest about
+    // WHAT was measured, but it is not an mcp_registry connector_id, so the
+    // record call failed on every startup and the run reported degraded — the
+    // probe was measured and then thrown away. The mapping from connection to
+    // connector belongs to the factory: mcp_registry.connection_name (added
+    // 2026-08-09). When the factory declares one, record against it; when it
+    // does not, keep the derived id and the same honest non-recording as
+    // before, with the remedy named. Resolution failing must never abort the
+    // startup — optionalQuery on both calls.
+    let connectorId = probe.connector_name;
+    let resolvedVia = null;
+    const mapped = await optionalQuery(
+      connections,
+      "SELECT connector_id FROM mcp_registry WHERE connection_name = $1 AND active LIMIT 1",
+      [probedConnection],
+      explicitConnection
+    );
+    if (mapped.ok && Array.isArray(mapped.rows) && mapped.rows[0] && mapped.rows[0].connector_id) {
+      connectorId = mapped.rows[0].connector_id;
+      resolvedVia = "mcp_registry.connection_name";
+    }
     // optionalQuery, not q: an unregistered connector must degrade this startup,
     // not abort it, and must not silently fall back to stamping another id.
     const result = await optionalQuery(
       connections,
       "SELECT fn_record_probe_result($1, $2, $3, $4) AS result",
-      [probe.connector_name, sessionId, probe.status, probe.note || null],
+      [connectorId, sessionId, probe.status, probe.note || null],
       explicitConnection
     );
     probeResults.push({
-      connector_name: probe.connector_name,
+      connector_name: connectorId,
+      derived_name: probe.connector_name,
+      resolved_via: resolvedVia,
       probed_connection: probedConnection,
       status: probe.status,
       source: "plugin_measured",
@@ -3053,7 +3077,7 @@ async function handleStartupRun(connections, args, explicitConnection = null) {
       error: result.ok
         ? null
         : `${result.error} — no probe was recorded for connection "${probedConnection}". ` +
-          "Register this connector in mcp_registry to have startup measure it.",
+          `Map it with mcp_registry.connection_name = '${probedConnection}' to have startup record its probe.`,
     });
   }
 
