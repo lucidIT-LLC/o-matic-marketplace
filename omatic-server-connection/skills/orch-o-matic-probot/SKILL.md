@@ -3,7 +3,7 @@ name: orch-o-matic-probot
 description: O-Matic Orchestrator. Plans, routes, and runs the factory. Triggers — Probot, start the factory, start an audit, close the session, convert this factory, plan this, set up a project, diagnose the factory.
 ---
 
-<!-- version: 14.4.0 | sig: 24 | identity: 972135db | author: James Walker | factory: O-Matic -->
+<!-- version: 15.0.0 | sig: 24 | identity: 972135db | author: James Walker | factory: O-Matic -->
 <!-- identity sourced from O-Matic persona gold record (tenant omatic). identity_signature: 972135db96de17a77453eeee2d6b8d4b -->
 
 # Orch-O-Matic (Probot) — O-Matic Project Orchestrator
@@ -269,28 +269,33 @@ The O-Matic LLM Server is the factory brain — a three-tier memory architecture
 
 | Tier | Name | Storage                                              | When to Use |
 |------|------|------------------------------------------------------|-------------|
-| 1 | Semantic Index | `semantic_index` table — `embedding vector(1536)` column, HNSW index, FTS gin index | "Does X exist? Where do I find more?" Entity-level recall. |
-| 2 | Full Chunks    | `document_chunks` table — `embedding vector(1536)` column, HNSW index, FTS gin index | "Give me the full spec for X." Deep content retrieval. |
+| 1 | Semantic Index | `brain.semantic_index` — `embedding vector(768)`, `model_version`, `embedding_runtime`, `embedding_stale`, `embedded_at`; HNSW + FTS gin | "Does X exist? Where do I find more?" Entity-level recall. |
+| 2 | Full Chunks    | `brain.document_chunks` — same column set, `embedding vector(768)`; HNSW + FTS gin | "Give me the full spec for X." Deep content retrieval. |
 | 3 | Structured DB  | All operational tables                               | Source of truth — FK rows, SQL filters, authoritative lookups via `omatic_execute_sql`. |
 
 ### Query Path Order
 
 1. **Direct SQL first** via `omatic_execute_sql`. For exact lookups against known IDs/names. Cheapest path.
 2. **FTS second** via `omatic_search_memory` (plugin-provided, FTS-backed against `summary_text` and `content`). Fast, no API call.
-3. **Hybrid (FTS + vector) third** — `fn_search_semantic` and `fn_search_documents` combine FTS rank + vector distance via Reciprocal Rank Fusion (k=60). Use when the caller or plugin runtime can generate a query embedding from OpenAI.
+3. **Hybrid (FTS + vector) third** — `fn_search_semantic` and `fn_search_documents` combine FTS rank + vector distance via Reciprocal Rank Fusion (k=60). Requires a query vector, which the plugin does not generate (decision #118: the plugin's contract is DB exposure, not embedding). The vector comes from Conductor on this device.
+
+**Retrieval without a vector is keyword-only, and that is a reportable state, not a neutral one.** `omatic_search_memory` returns `outcome=degraded` naming the missing vector for exactly this reason. Measured 2026-08-08/09: 28 of 93 retrieval events ran keyword-only, and the vector path was dead for roughly 22 hours with nothing surfacing it. Check `v_retrieval_health` when retrieval feels wrong.
 
 ### Hybrid Search Workflow (callers with embedding capability)
 
 ```
-1. Compute query embedding via OpenAI (one HTTPS call):
-   POST https://api.openai.com/v1/embeddings
-   model: text-embedding-3-small  (1536-dim, cosine)
-   input: [query text]
+1. Compute the query embedding ON DEVICE via Conductor (one local call):
+   POST https://127.0.0.1:8438/mcp     ← loopback only; shared mode is dead
+   tools/call → embed_query { text: [query text] }
+   returns: 768-d vector + weightsIdentifier + runtime
+
+   Conductor applies the query prefix itself. Do NOT pre-prefix with
+   "search_query:" — double-prefixing degrades retrieval silently.
 
 2. Call the search function via omatic_execute_sql:
    SELECT * FROM fn_search_semantic(
      p_query_text   => '...',
-     p_query_vector => '[...1536 floats...]'::vector,
+     p_query_vector => '[...768 floats...]'::vector,
      p_tenant_id    => '[tenant]',
      p_limit        => 10
    );
@@ -304,14 +309,22 @@ The O-Matic LLM Server is the factory brain — a three-tier memory architecture
 
 ### Credentials
 
-All embedding credentials live in `factory_config`:
+The embedding contract lives in `factory_config` (category `embedding`). Measured 2026-08-09:
 
-| key | category | purpose |
-|-----|----------|---------|
-| `openai_api_key` | embedding | OpenAI API key |
-| `openai_embedding_model` | embedding | model name (default: `text-embedding-3-small`) |
+| key | value |
+|-----|-------|
+| `embedding_provider` | `onboard-openai-compatible` — Conductor on this device |
+| `embedding_endpoint` | Conductor's MCP endpoint. **Host-dependent**: use `127.0.0.1` where Conductor runs; a machine cannot reach its own tailnet IPv4 |
+| `embedding_model_identity` | `nomic-embed-text-v1.5@e9b6763023c676ca8431644204f50c2b100d9aab` |
+| `embedding_dimension` | `768` |
+| `embedding_text_prefix` | `{"query": "search_query:", "corpus": "search_document:"}` |
+| `embedding_api_key` | `env:CONDUCTOR_TOKEN` — an indirection, never a literal |
 
 Read with: `SELECT key, value FROM factory_config WHERE category = 'embedding'`.
+
+**There are no OpenAI keys.** `openai_api_key` and `openai_embedding_model` were removed by the on-device migration (2026-08-08, `embedding_migration_state`: 1536-dim columns dropped, OpenAI dependency removed). A factory that still has them is pre-System-5 and needs conversion, not a workaround.
+
+**Weights identity is a hard gate, both directions.** A vector written or queried under different weights returns confident, plausible, wrong results with no error anywhere. The corpus side refuses on mismatch (`assertReadyForWrites`); the query side refuses too since Conductor 5.0.0 (`assertReadyForSearch`). `embedding_runtime` records which runtime produced each vector — separate metadata from `model_version`, because the same weights on Core ML and ONNX are the same vector space.
 
 ### Memory Lifecycle Governance
 
@@ -353,6 +366,23 @@ Surfaced at every Probot startup via `omatic_factory_startup`:
 
 Persistent `unembedded > 0` = bootstrap stalled — surface to operator. Persistent `stale > 0` = drift signal. `decommissioned_terms` non-zero = content cleanup needed; query `v_rules_with_decommissioned_terms` etc. to identify offending rows.
 
+### System 5 — recognising where a factory stands
+
+O-Matic **System 5** is the generation label: Conductor 5.0.0 (the per-device control plane), this plugin, and the factory schema contract move together. Components keep their own semver; the generation is the compatibility statement.
+
+**Recognising a pre-System-5 factory.** Any of these means the factory has not been converted:
+
+- `brain.semantic_index` / `brain.document_chunks` lack an `embedding_runtime` column
+- `factory_config` still carries `openai_api_key` or `openai_embedding_model`
+- `embedding_dimension` is 1536, or the vector columns are `vector(1536)`
+- no `schema_contract` row in `factory_config`
+
+**What to do about it.** Report it plainly at startup — a pre-5 factory is not a broken one, and it is not "degraded System 5" either. It runs the 4.x contract: plugin-direct SQL, credentials on the host, keyword-only retrieval where no Conductor is installed. Conversion is a sequenced advisory (FA-2026-05), not an ad-hoc fix; do not half-convert a factory to make one query work.
+
+**Where the plan lives.** `_omatic/blueprints/` is the convention: `system-5-plan.md` (stages, topology, protocol), `conductor-v1.5.md` (product blueprint as amended), `system-5-compliance-register.md` (HIPAA/HITRUST control status and the claims ceiling — rule #323), `marketplace-change-log.md` (what must change in the marketplace, and what has).
+
+**Conductor's topology, in one line.** Every device runs its own Conductor, bound to loopback, speaking HTTPS with a per-device CA. There is no hub and no shared mode. A device without a Conductor build is a pre-5 device.
+
 ### Setting Up LLM Server on a New Factory
 
 Reference implementation: [github.com/lucidIT-LLC/o-matic-server](https://github.com/lucidIT-LLC/o-matic-server) — Dockerfile, schema, search functions, README.
@@ -390,6 +420,7 @@ Operator decision required: [yes/no]
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 15.0.0 | 2026-08-09 | **System 5.** §8.5 rewritten against measured `factory_config` and live schema: the tiers are 768-dim with `embedding_runtime`, the query vector comes from Conductor on loopback (not OpenAI), and the OpenAI credential table is replaced with the real embedding contract. The old section documented `text-embedding-3-small` @1536 and `openai_api_key` — all removed by the on-device migration on 2026-08-08, so any skill reading it was reading fiction. Added: retrieval-without-a-vector is a reportable degraded state (28 of 93 events measured keyword-only, vector path dead ~22h unnoticed); weights identity is a hard gate in both directions; a new "System 5 — recognising where a factory stands" section giving the four pre-5 tells, the conversion posture, and the `_omatic/blueprints/` convention. |
 | 14.4.0 | 2026-08-08 | `embedder-worker.js` retired in plugin 4.0.0 and replaced by `scripts/embed-drain.mjs`, which speaks the configured provider, covers both tiers, and verifies weights before writing. Recorded that an endpoint is not a drain: polling is still unowned. |
 | 14.3.0 | 2026-08-08 | Embedder Worker Contract updated for the `embed-o-matic-embedder` skill removal (plugin 3.7.0). The embedding write path is an external service named in `factory_config`; `embedder-worker.js` stays as the fallback drain until 4.0.0. |
 | 14.2.0 | 2026-06-21 | Added explicit memory lifecycle governance contract: admission gate, lifecycle states, authority boundaries, contradiction/supersession handling, and operator escalation points. Replaced writer-owned vector refresh language with the plugin Embedder worker contract. |
