@@ -1,7 +1,7 @@
 {
   "schema": "lucidit-agent-pack-v1",
   "name": "omatic-server-connection",
-  "version": "4.1.0",
+  "version": "5.0.0",
   "display_name": "O-Matic Server Connection",
   "owner": {
     "name": "lucidIT-LLC",
@@ -10,7 +10,7 @@
   "homepage": "https://o-matic.io",
   "repository": "https://github.com/lucidIT-LLC/o-matic-server-connection",
   "license": "MIT",
-  "description": "Host-aware MCP connection plugin for O-Matic factories with bundled Probot, Fred, Data, and Embedder skills plus a background embedding worker.",
+  "description": "Host-aware MCP plugin that pins a project to its O-Matic factory and ships the Probot, Fred and Data skills. Not a database client: it holds no credentials and runs no SQL — factory database access is Conductor's, over MCP on loopback.",
   "canonical_format": {
     "type": "mcp_plugin_with_markdown_skills",
     "mcp_server": "server/index.js",
@@ -110,7 +110,7 @@
       "id": "fred",
       "display_name": "Fred",
       "canonical_skill": "skills/find-o-matic-fred/SKILL.md",
-      "mode": "storage and connection CRUD",
+      "mode": "storage and connection stewardship (via Conductor)",
       "version": "9.2.0",
       "release": {
         "channel": "stable",

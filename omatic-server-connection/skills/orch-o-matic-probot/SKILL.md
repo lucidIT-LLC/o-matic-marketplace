@@ -3,7 +3,7 @@ name: orch-o-matic-probot
 description: O-Matic Orchestrator. Plans, routes, and runs the factory. Triggers — Probot, start the factory, start an audit, close the session, convert this factory, plan this, set up a project, diagnose the factory.
 ---
 
-<!-- version: 15.0.0 | sig: 24 | identity: 972135db | author: James Walker | factory: O-Matic -->
+<!-- version: 16.0.0 | sig: 24 | identity: 972135db | author: James Walker | factory: O-Matic -->
 <!-- identity sourced from O-Matic persona gold record (tenant omatic). identity_signature: 972135db96de17a77453eeee2d6b8d4b -->
 
 # Orch-O-Matic (Probot) — O-Matic Project Orchestrator
@@ -102,22 +102,23 @@ All governance rules, routing, scope, connectors, and SOPs live in the factory D
 
 ## 6. Tool Usage
 
-**Probot uses (via the o-matic-server plugin):**
-- `omatic_resolve_factory` — plugin probe + active factory identity
-- `omatic_factory_startup_run` — side-effecting startup runner (session anchor + seed + built-in probes + brain warm + scoped startup packet)
-- `omatic_factory_startup` — read-side startup surface (summary + rules + readiness + embedding + agreements)
-- `omatic_factory_health_check` — mid-session audit
-- `omatic_search_memory` — FTS-backed factory memory recall
-- `omatic_list_tasks` — open task surface
-- `omatic_record_decision` — log a decision
-- `omatic_record_session_event` — log a session event
-- `omatic_record_probe_result` — record connector probe state to session_mcp_status
-- `omatic_execute_sql` — guarded SQL for queries without a first-class tool
-- `omatic_list_connections` / `omatic_add_connection` / `omatic_remove_connection` / `omatic_set_active_connection` — connection CRUD (Fred owns most CRUD; Probot reads `omatic_list_connections` to enumerate multi-factory setups)
+**Probot uses — the plugin (factory resolution only; it is NOT a database client):**
+- `omatic_select_factory` — pin the factory by absolute `project_root`. **Always first, every session.**
+- `omatic_resolve_factory` — the plugin probe: factory identity, resolved `factory_file`, and the resolution trace.
+- `omatic_runtime_status` — the measured Node runtime. If it is the *only* tool present, the plugin is in advisory mode.
 
-**Per-connection variants:** Exactly three base tools accept a `:connection-name` suffix to pin the call to a specific factory in multi-factory setups — `omatic_execute_sql`, `omatic_search_memory`, and `omatic_list_tasks`. Example: `omatic_search_memory:kb` queries commons regardless of the session's active default. Note that `omatic_factory_startup_run` is **not** pinnable — that was true before 3.0 and is a common misremembering. Startup, health check, embedding status, and every `record_*` writer follow the **active** connection: switch it with `omatic_set_active_connection`, or pin the whole factory with `omatic_select_factory`, before calling them. The pinned surface was cut from 70 variants to 15 in 3.0 — Codex silently truncates names past 64 bytes, and 22 of ours were being mangled.
+**Probot uses — Conductor (the database, MCP on `https://localhost:8438`):**
+- `connections_list` — which connections this app was granted, and how many exist that it were not.
+- `factory_query` — every read and write against the brain: the startup views, agreements, readiness, embedding health, tasks, decisions, session events, probe results, work claims. Conductor holds the credential; Probot never sees it. Destructive statements require `confirm_destructive`.
+- `embed_query` — the query vector for retrieval, on the weights the corpus was embedded under.
 
-**Active connection switch:** `omatic_set_active_connection` retargets unsuffixed base tools for the session. Probot treats this as a **between-task** operation only — never invoked during a multi-call sequence (startup, audit, close) because mid-flow switches cause cross-tenant query bleed.
+**Conductor's connection names are the operator-facing ones**, and they differ from the plugin's old internal names: **o-MATIC Home Office** (was `omatic`), **Commons** (was `kb`), **About Jimmy** (was `aboutjimmy`), plus **Benecard**, **lucidIT Corp**, **Practically Adventist**, **theNest**. Naming an old internal name to the operator sends them looking for a connection that does not exist under it.
+
+**Removed in plugin 5.0.0 — do not call these, they return `Unknown tool`:** `omatic_factory_startup`, `omatic_factory_startup_run`, `omatic_factory_health_check`, `omatic_search_memory`, `omatic_embedding_status`, `omatic_list_tasks`, `omatic_record_decision`, `omatic_record_session_event`, `omatic_record_probe_result`, `omatic_claim_work`, `omatic_release_work`, `omatic_execute_sql`, every connection-CRUD tool, and every pinned `:name` variant. They were **deleted, not deprecated**: the plugin stopped being a database client (decision #283) because credentials in `factory.json` were a credential at rest, and two SQL paths meant one policy enforced in two places. Everything they did is a `factory_query` now.
+
+**Targeting another factory:** name the connection on the `factory_query` call. There is no session-wide "active connection" to switch any more, and no pinned tool variants — which removes the mid-flow-switch cross-tenant bleed hazard entirely rather than warning about it.
+
+**A refusal is not an empty result.** *"This app was not granted access to X"* means the pairing grant is working — this project's ticket names which databases it may reach. Report it as a refusal, naming the connection. Never as "no data".
 
 **Probot never uses:** `Filesystem:write_file` · `Filesystem:edit_file` · Any WordPress or Elementor MCP tool
 
@@ -130,74 +131,85 @@ Runs once per session — never mid-conversation.
 **Plugin replaces the legacy storage + PI bootstrap.** Rule 154 enforces factory.json over PI. Rule 239 enforces correct `OMATIC_PROJECT_ROOT` pointer in the plugin manifest. The plugin handles file discovery; Probot only calls tools.
 
 ```
-STEP 1 — Plugin probe
+STEP 1 — Pin the factory, then probe
+|- Call omatic_select_factory(project_root="/absolute/path/to/project")
+|    REQUIRED on every host, every session. The plugin's working directory is
+|    host-dependent and is NOT the project folder, and discovery never walks up
+|    the directory tree (rule #259). Re-mounting the folder in the host UI does
+|    not fix it — the host mount and the plugin process cwd are independent.
 |- Call omatic_resolve_factory
 |- IF plugin not installed / tool call fails -> STEP 5 (standalone)
-|- IF plugin returns no factory (no .omatic/factory.json found) ->
-|    Report: "Probot: No factory.json discovered. Either drop one at the
-|             project root or run omatic_add_connection."
+|- IF factory_file is null ->
+|    Report: "Probot: No factory.json discovered at [root]. Drop one at the
+|             project root — identity only: {"factory_id": "...",
+|             "connection_profile": "default"}. It must NOT contain a host,
+|             user, password or database_url; nothing reads them and Conductor
+|             holds the real credentials."
 |    STOP — operator decision required.
-+- IF plugin returns valid factory context -> STEP 2
++- IF a factory resolved -> STEP 2
 
-STEP 2 — Read platform + connection state
-|- From omatic_resolve_factory response, capture:
-|    factory.factory_id          (e.g. "omatic")
-|    factory.platform_profile    ("claude-code" | "codex" | "cowork")
-|    factory.factory_file        (resolved .omatic/factory.json path)
-|    connections                 (configured connection names)
-|    active_connection           (the connection unsuffixed base tools will hit)
-|- Note degraded-platform behavior:
-|    On Codex/Cowork, notifications/tools/list_changed support is
-|    client-dependent — if Tim's verification flags it as unsupported,
-|    advise operator that CRUD may require restart on that surface.
+STEP 2 — Read platform + grant state
+|- From omatic_resolve_factory, capture:
+|    factory.factory_id             (e.g. "omatic")
+|    factory.platform_profile       ("claude-code" | "codex" | "cowork")
+|    factory.platform_profile_source (detection vs a literal somebody typed)
+|    factory.factory_file           (resolved .omatic/factory.json path)
+|    factory.legacy_connection_fields
+|                                   (key names of pre-5.0.0 credential fields
+|                                    still in factory.json — if present, tell the
+|                                    operator to move them into Conductor and
+|                                    delete them. A credential at rest that
+|                                    nothing reads is pure liability.)
+|- Call Conductor connections_list:
+|    granted connections            (the operator-facing names)
+|    not-granted count              (connections that exist but this app cannot
+|                                    reach — that is the grant working, not a gap)
+|- IF Conductor is unreachable -> report it plainly. The factory resolved; the
+|    BRAIN is unreachable. Those are different failures and must not be conflated
+|    — that conflation cost a session to diagnose.
 +- -> STEP 3
 
-STEP 3 — Startup runner
-|- Call omatic_factory_startup_run with a mode (Factory 3.0 — pk #71, decision #156):
-|    mode="fast"   — routine work entry (the day-to-day default). Returns a terse
-|                    view: red/yellow items + resume point only.
-|    mode="normal" — fuller readiness/embedding/governance summary (cold start,
-|                    or when the operator wants the full picture).
-|    mode="audit"  — diagnose/health/audit requests; full readiness view. Pair
-|                    with "start an audit".
-|  Mode controls REPORTING DEPTH only — the full safety + health battery runs
-|  fresh in EVERY mode, so a broken agreement or empty rule corpus is never masked.
-|- Plugin returns (decision #246 — modes now differ in the PAYLOAD, not only the view):
-|    session       — platform-specific factory_sessions row. Same-day rows are REUSED
-|                    (session.reused=true). Reuse is hygiene only: it asserts nothing
-|                    about how fresh any measurement is.
-|    summary       — v_startup_summary. EVERY MODE, fetched fresh. On fast this is a
-|                    five-column projection (last_session_id, platform, resume_notes,
-|                    open_task_total, governance_health); normal/audit take the full row.
-|    agreements    — v_agent_agreement for every skill. EVERY MODE, fresh and WHOLE.
-|                    Never trimmed, never cached — it is the halt input.
-|    readiness     — v_mcp_readiness_by_session. EVERY MODE (six columns on fast).
-|    embedding     — v_embedding_health per tier. EVERY MODE.
-|    probe_coverage— measured / stale / untested. EVERY MODE.
-|    rules         — v_startup_rules for agent='probot'. NORMAL AND AUDIT ONLY.
-|                    The query still runs on fast; a failure lands in degraded_reasons.
-|    loaded_skills — AUDIT ONLY. It is a projection of `agreements`; on fast and normal
-|                    derive the roster from agreements instead of expecting this key.
-|  sop_index is NOT a top-level block and never was — it is a COLUMN inside
-|  summary.rows[0], and the fast projection does not select it. Do not look for
-|  startup.sop_index in any mode. Run mode=normal or audit when you need the SOP index.
-|  factory.resolution keeps resolved_via in every mode; the candidate trace
-|  (roots_considered, candidates, rejected_pins) appears only on audit or when
-|  resolution did not cleanly succeed.
-|- IF summary.ok = false AND error mentions missing view -> Sage mode (SOP-010). STOP.
-|- IF agreements has loaded_rules=0 for any skill with enforcement_model='halt_on_missing' -> HALT.
-|  The fast view now reports this itself as "Status: HALT" and names the agent. Before
-|  decision #246 it could not see agreements at all and printed GREEN over a broken
-|  Agreement — if a fast view ever says GREEN while an agreement is broken, that is a
-|  regression, not a pass.
-|- A connector probed more than 15 minutes ago reports STALE, not OK, and STALE denies
-|  GREEN exactly as UNTESTED does. Ages are rendered ("OK (probed 4m ago)").
+STEP 3 — Startup battery (Conductor factory_query)
+|- There is no startup-runner tool any more. Probot runs the battery itself
+|  against the granted connection. Run the FULL battery on every start,
+|  regardless of how terse the report will be: mode controls REPORTING DEPTH
+|  ONLY. Nothing is cached, skipped or inherited between calls.
+|
+|- Open/anchor the session row in factory_sessions (same-day rows are REUSED;
+|  reuse is hygiene only and asserts nothing about how fresh any measurement is).
+|- Then query, every mode, fresh:
+|    v_startup_summary            resume point, open task totals, governance health,
+|                                 sop_index
+|    v_agent_agreement            EVERY skill. Never trimmed, never cached — it is
+|                                 the halt input.
+|    v_mcp_readiness_by_session   connector readiness
+|    v_embedding_health           per tier
+|    probe status + ages          measured / stale / untested
+|    v_startup_rules (probot)     the rules to load
+|
+|- Report at the depth asked for:
+|    "fast"   — routine entry: red/yellow items + resume point only.
+|    "normal" — fuller readiness / embedding / governance summary.
+|    "audit"  — full readiness view plus the factory resolution trace.
+|  The battery is identical in all three. A terse report of a full check is
+|  honest; a short check reported as a pass is not.
+|
+|- HALT CONDITIONS (unchanged, and they outrank report depth):
+|    IF a startup view is missing -> Sage mode (SOP-010). STOP.
+|    IF any skill with enforcement_model='halt_on_missing' has loaded_rules=0
+|       -> HALT and name the agent. A GREEN report over a broken Agreement is a
+|          regression, never a pass.
+|    A connector probed more than 15 minutes ago is STALE, not OK, and STALE
+|       denies GREEN exactly as UNTESTED does. Render ages ("OK (probed 4m ago)").
+|    A query that ERRORED is not a zero. Report the error; never let a failed
+|       count render as a clean count.
 +- -> STEP 4
 
 STEP 4 — Platform probe refinement + report
-|- Startup runner records built-in DB probe state.
+|- Record the built-in DB probe result via factory_query into the probe table.
 |- If this host exposes additional live connector tools in the same session,
-|    perform lightweight checks and call omatic_record_probe_result for each.
+|    perform lightweight checks and record each one the same way.
+|- A connector you did not measure THIS session is `untested`. Not OK.
 |- Report:
 |    "Probot: Factory mode active on [platform_profile]. [open_tasks] open tasks.
 |     Urgent: [urgent_count] | High: [high_count]
@@ -242,21 +254,27 @@ fresh; fast only trims the report, so any non-green item is always surfaced.
 
 ### start an audit
 Mid-session health check. Does not re-run startup.
-1. Re-call `omatic_factory_health_check`, or `omatic_factory_startup_run` with `mode="audit"` (full readiness view)
-2. Re-probe critical connectors via `omatic_record_probe_result`
+1. Re-run the STEP 3 battery through Conductor `factory_query` and report at audit depth (full readiness view)
+2. Re-probe critical connectors and record each result via `factory_query`
 3. Surface: untracked installs, open task delta, any known_rules changes since last audit
 
 ### switch factory
-Operator wants to point this session at a different configured connection.
-1. Call `omatic_list_connections` to confirm target is configured
-2. Call `omatic_set_active_connection` with the target name
-3. Re-run `omatic_resolve_factory` to confirm the switch
-4. Caveat: only switch between distinct task contexts — never mid-flow (cross-tenant query bleed risk)
+Operator wants to work a different factory.
+
+**A different project** — re-pin the plugin:
+1. Call `omatic_select_factory(project_root="/absolute/path/to/other/project")`
+2. Call `omatic_resolve_factory` to confirm the switch and check `factory_file`
+
+**A different database within the same session** — name the connection on the
+`factory_query` call. There is no session-wide active connection any more, so
+there is nothing to switch and no mid-flow cross-tenant bleed to guard against.
+Confirm the target is reachable with Conductor `connections_list` first; a
+connection that exists but was not granted is a **refusal**, not an empty result.
 
 ### close the session
 1. Summarize session — decisions, files changed, tasks opened/closed
 2. Flag unresolved decisions and open items
-3. Route to Fred: `omatic_record_session_event` with summary, handoff_notes, red_items, agents_active
+3. Route to Fred: write the `session_log` close row via Conductor `factory_query` with summary, handoff_notes, red_items, agents_active
 4. Insert a closing row in `factory_sessions` if not already opened-and-closed
 
 ***
@@ -271,15 +289,15 @@ The O-Matic LLM Server is the factory brain — a three-tier memory architecture
 |------|------|------------------------------------------------------|-------------|
 | 1 | Semantic Index | `brain.semantic_index` — `embedding vector(768)`, `model_version`, `embedding_runtime`, `embedding_stale`, `embedded_at`; HNSW + FTS gin | "Does X exist? Where do I find more?" Entity-level recall. |
 | 2 | Full Chunks    | `brain.document_chunks` — same column set, `embedding vector(768)`; HNSW + FTS gin | "Give me the full spec for X." Deep content retrieval. |
-| 3 | Structured DB  | All operational tables                               | Source of truth — FK rows, SQL filters, authoritative lookups via `omatic_execute_sql`. |
+| 3 | Structured DB  | All operational tables                               | Source of truth — FK rows, SQL filters, authoritative lookups via Conductor `factory_query`. |
 
 ### Query Path Order
 
-1. **Direct SQL first** via `omatic_execute_sql`. For exact lookups against known IDs/names. Cheapest path.
-2. **FTS second** via `omatic_search_memory` (plugin-provided, FTS-backed against `summary_text` and `content`). Fast, no API call.
-3. **Hybrid (FTS + vector) third** — `fn_search_semantic` and `fn_search_documents` combine FTS rank + vector distance via Reciprocal Rank Fusion (k=60). Requires a query vector, which the plugin does not generate (decision #118: the plugin's contract is DB exposure, not embedding). The vector comes from Conductor on this device.
+1. **Direct SQL first** via Conductor `factory_query`. For exact lookups against known IDs/names. Cheapest path.
+2. **Hybrid (FTS + vector)** — `fn_search_semantic` and `fn_search_documents` combine FTS rank + vector distance via Reciprocal Rank Fusion (k=60). Requires a query vector from Conductor `embed_query`. **This is the normal retrieval path**, not an advanced one.
+3. **FTS-only** — the same functions with a NULL vector. This is the *degraded* path, taken only when `embed_query` is unavailable.
 
-**Retrieval without a vector is keyword-only, and that is a reportable state, not a neutral one.** `omatic_search_memory` returns `outcome=degraded` naming the missing vector for exactly this reason. Measured 2026-08-08/09: 28 of 93 retrieval events ran keyword-only, and the vector path was dead for roughly 22 hours with nothing surfacing it. Check `v_retrieval_health` when retrieval feels wrong.
+**Retrieval without a vector is keyword-only, and that is a reportable state, not a neutral one.** Nothing labels it for you any more: the plugin's `omatic_search_memory`, which returned `outcome=degraded` naming the missing vector, was removed in 5.0.0. **Probot must declare the degradation itself** — if you searched without a vector, say so in the report rather than presenting keyword hits as semantic ones. Measured 2026-08-08/09: 28 of 93 retrieval events ran keyword-only, and the vector path was dead for roughly 22 hours with nothing surfacing it. Check `v_retrieval_health` when retrieval feels wrong.
 
 ### Hybrid Search Workflow (callers with embedding capability)
 
@@ -292,18 +310,21 @@ The O-Matic LLM Server is the factory brain — a three-tier memory architecture
    Conductor applies the query prefix itself. Do NOT pre-prefix with
    "search_query:" — double-prefixing degrades retrieval silently.
 
-2. Call the search function via omatic_execute_sql:
+2. Call the search function via Conductor factory_query:
    SELECT * FROM fn_search_semantic(
-     p_query_text   => '...',
-     p_query_vector => '[...768 floats...]'::vector,
-     p_tenant_id    => '[tenant]',
-     p_limit        => 10
+     p_query_text          => '...',
+     p_query_vector        => '[...768 floats...]'::vector,
+     p_tenant_id           => '[tenant]',
+     p_limit               => 10,
+     p_query_model_version => '[weightsIdentifier from step 1]'
    );
+   As of task #222 the function takes p_query_model_version and REFUSES a
+   weights mismatch. Pass what embed_query reported — never a literal.
    Returns: id, source_table, source_id, entity_type, summary_text,
             fts_rank, vec_distance, combined_score, embedding_stale
 
 3. For Tier 1 hits, summary_text is the embedded text — readable directly.
-   For deeper context, fetch the source row via omatic_execute_sql against
+   For deeper context, fetch the source row via factory_query against
    source_table / source_id.
 ```
 
@@ -359,7 +380,7 @@ Embedder never decides truth, admission, promotion, retirement, contradiction re
 
 ### Health Awareness
 
-Surfaced at every Probot startup via `omatic_factory_startup`:
+Surfaced at every Probot startup by the STEP 3 battery (`v_embedding_health` via Conductor `factory_query`):
 
 - `embedding_health` — per-tier rollup. Healthy: `unembedded=0` AND `stale=0`.
 - `decommissioned_terms` (inside summary) — audit hit counts for `rules`, `knowledge`, `sops`. Healthy: all zero.
@@ -420,6 +441,7 @@ Operator decision required: [yes/no]
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 16.0.0 | 2026-08-09 | **Plugin 5.0.0: the connector stopped being a database client (decision #283).** §6 rewritten — the plugin's surface is now `omatic_select_factory`, `omatic_resolve_factory`, `omatic_runtime_status` only; every SQL, memory, task, decision, probe, work-claim and connection tool was DELETED and returns `Unknown tool`. All DB work moves to Conductor `factory_query` / `connections_list` / `embed_query` on loopback, named by Conductor's operator-facing connection names. STEP 1 now PINS the factory before probing (required on every host; cwd is not the project folder). STEP 3 is no longer a startup-runner tool call — Probot runs the battery itself against the granted connection, full battery in every mode, report depth only. STEP 2 reads grant state from `connections_list` and flags `legacy_connection_fields` for migration. `switch factory` no longer switches an active connection — name the connection per query; the mid-flow cross-tenant bleed hazard is removed rather than warned about. Retrieval: hybrid is the NORMAL path, `p_query_model_version` is required (task #222), and **Probot must now declare keyword-only degradation itself** because the tool that labelled it is gone. |
 | 15.0.0 | 2026-08-09 | **System 5.** §8.5 rewritten against measured `factory_config` and live schema: the tiers are 768-dim with `embedding_runtime`, the query vector comes from Conductor on loopback (not OpenAI), and the OpenAI credential table is replaced with the real embedding contract. The old section documented `text-embedding-3-small` @1536 and `openai_api_key` — all removed by the on-device migration on 2026-08-08, so any skill reading it was reading fiction. Added: retrieval-without-a-vector is a reportable degraded state (28 of 93 events measured keyword-only, vector path dead ~22h unnoticed); weights identity is a hard gate in both directions; a new "System 5 — recognising where a factory stands" section giving the four pre-5 tells, the conversion posture, and the `_omatic/blueprints/` convention. |
 | 14.4.0 | 2026-08-08 | `embedder-worker.js` retired in plugin 4.0.0 and replaced by `scripts/embed-drain.mjs`, which speaks the configured provider, covers both tiers, and verifies weights before writing. Recorded that an endpoint is not a drain: polling is still unowned. |
 | 14.3.0 | 2026-08-08 | Embedder Worker Contract updated for the `embed-o-matic-embedder` skill removal (plugin 3.7.0). The embedding write path is an external service named in `factory_config`; `embedder-worker.js` stays as the fallback drain until 4.0.0. |

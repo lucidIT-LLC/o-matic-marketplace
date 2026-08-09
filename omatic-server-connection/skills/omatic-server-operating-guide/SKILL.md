@@ -1,65 +1,122 @@
 ---
 name: omatic-server-operating-guide
-description: Use when operating an O-Matic Server project through the Codex plugin, including factory startup, health checks, memory search, embedding status, task review, decision logging, connection setup, work claims, and guarded SQL.
+description: Use when operating an O-Matic Server project through the plugin — pinning the factory, confirming resolution, and reaching the factory database through Conductor for startup, memory search, task review, decision logging and SQL.
 ---
 
 # O-Matic Server — Operating Guide
 
-<!-- version: 4.1.0 | sig: 2 | author: James Walker | package: O-Matic Server Connection -->
+<!-- version: 5.0.0 | sig: 2 | author: James Walker | package: O-Matic Server Connection -->
 
-This plugin is project-centric. Resolve the active factory from folder context before running factory work.
+This plugin is project-centric and, as of 5.0.0, **not a database client**. It
+resolves and pins the factory. Everything that touches a database goes through
+**Conductor**.
 
 ## Operating Model
 
-- One Codex session operates one factory.
-- Folder context wins. Do not switch factories inside a session unless the operator explicitly asks to override project context.
-- Use the factory tools before raw SQL when a high-level tool exists.
-- Destructive SQL requires explicit operator confirmation.
-- Work claims are per factory and auto-expire when the `work_claims` table is installed.
-- The plugin is the gateway/tool surface; the factory database remains the source of truth.
+- One session operates one factory.
+- **Folder context wins.** Do not switch factories inside a session unless the
+  operator explicitly asks to override project context.
+- The plugin answers "which factory is this?". Conductor answers "what is in
+  it?". Neither substitutes for the other.
+- The factory database remains the source of truth. State is queried, not
+  recalled.
+- Destructive SQL requires explicit operator confirmation, enforced by
+  Conductor's `confirm_destructive` flag.
 
 ## Startup
 
-When the operator says `start the factory`, `restart the factory`, `Probot start`, or `run startup`:
+When the operator says `start the factory`, `restart the factory`, `Probot
+start`, or `run startup`:
 
-1. Call `omatic_resolve_factory`.
-2. Call `omatic_factory_startup_run` when available. It opens the platform session, seeds readiness, records built-in probes, warms retrieval, and returns the scoped startup packet.
-3. If `omatic_factory_startup_run` is unavailable, call `omatic_factory_startup` and then execute the DB startup rules returned by `v_startup_rules`.
-4. Report the startup summary, connector readiness, embedding health, SOP index presence, and agent agreement flags.
-5. If an exact session audit is needed later, pass the current `factory_sessions.id` to `omatic_factory_startup`.
+1. **Pin the factory first.** Call
+   `omatic_select_factory(project_root="/absolute/path")`. This is required on
+   every host: the plugin's working directory is host-dependent and is not the
+   project folder, and discovery never walks up the directory tree (rule #259).
+2. Call `omatic_resolve_factory` and check `factory_file` is non-null. If it is
+   null, **stop and report** — do not run work against an unresolved factory.
+3. Open the session and load startup state through Conductor's `factory_query`
+   against the granted connection (session anchor, connector readiness, startup
+   rules, agent agreements, open tasks).
+4. Report the startup summary, connector readiness, embedding health, SOP index
+   presence and agreement flags — and report each **as measured**. A connector
+   with no measurement this session is `untested`, not OK.
 
-If this skill is loaded in Codex but `omatic_*` tools are absent, report a Codex plugin MCP registration/cache/reload failure. Do not diagnose that as standalone factory mode, and do not edit factory config. The package or installed plugin cache must be fixed and loaded in a fresh thread.
+If the `omatic_*` tools are absent entirely, report a plugin MCP
+registration/cache/reload failure. If `omatic_runtime_status` is the *only* tool
+present, the plugin is in advisory mode and the Node runtime failed to resolve.
+Neither is "standalone factory mode", and neither is fixed by editing factory
+config.
+
+## Database access — Conductor
+
+Conductor holds every factory credential in the Mac Keychain and grants them per
+paired app over MCP on `https://localhost:8438`.
+
+- `connections_list` — which connections this app was granted, and how many exist
+  that it was not.
+- `factory_query` — SQL against a granted connection. Conductor holds the
+  credential; the caller never sees it. Destructive statements refuse unless
+  `confirm_destructive` is true.
+- `embed_query` — a 768-d query vector on the weights the corpus was embedded
+  under.
+
+Conductor's connection names are the **operator-facing** ones and differ from the
+plugin's old internal names: **o-MATIC Home Office** (was `omatic`), **Commons**
+(was `kb`), **About Jimmy** (was `aboutjimmy`), plus **Benecard**, **lucidIT
+Corp**, **Practically Adventist**, **theNest**.
+
+*"This app was not granted access to X"* is the pairing grant working — the
+ticket for this project names which databases it may reach. It is a **refusal**,
+never an empty result. Report it as one.
 
 ## Retrieval
 
-Use `omatic_search_memory` for memory lookup.
+1. Get a query vector from Conductor's `embed_query`.
+2. Call `fn_search_semantic` / `fn_search_documents` through `factory_query`,
+   passing `p_query_model_version` from the vector you were given.
 
-Use `omatic_embedding_status` when the operator asks how embeddings, pgvector, or retrieval works. The tool reports the active factory's DB-owned embedding configuration, vector extensions, vector/FTS indexes, embedding health, and whether the plugin itself can generate query embeddings.
+Those functions take `p_query_model_version` and **refuse a weights mismatch**
+(task #222) — a corpus embedded under one set of weights and searched under
+another returns confident nonsense, so the refusal is the feature.
 
-## Embedder Worker
-
-The plugin ships `scripts/embed-drain.mjs` as the embedding drain. It speaks the provider named in `factory_config` and covers both tiers. Run once with:
-
-```bash
-OMATIC_PROJECT_ROOT=/path/to/factory node scripts/embed-drain.mjs
-```
-
-Run as a service loop with:
-
-```bash
-OMATIC_PROJECT_ROOT=/path/to/factory node scripts/embed-drain.mjs --watch
-```
-
-Embedder refreshes only admitted Tier 1 and Tier 2 rows already present in `brain.semantic_index` and `brain.document_chunks`. It does not admit memory, resolve contradictions, promote canon, retire records, or decide truth.
+**Keyword-only retrieval is a reportable degraded state, not a neutral
+fallback.** If you could not get a vector, say so rather than presenting FTS hits
+as semantic ones. `v_retrieval_health` is the gauge.
 
 ## Connections
 
-Use `omatic_list_connections` to inspect configured connections with passwords redacted.
+Connection CRUD is Conductor's, and the operator approves it in Conductor's own
+UI: `connections_list` to see what is granted, `connection_propose` /
+`connection_amend` / `connection_remove` to change it.
 
-Use `omatic_add_connection` only when the operator asks to add or update a factory DB connection. The tool test-connects by default before writing `.omatic/factory.json`.
+**Never write a database credential into `.omatic/factory.json`.** Nothing reads
+it — this plugin does not connect to a database — so it is a credential at rest
+serving no purpose. `omatic_resolve_factory` reports the key names of any
+leftovers so they can be moved into Conductor and deleted.
 
-Use `omatic_remove_connection` only when the operator asks to remove a connection.
+An **empty connection list in `factory.json` is correct, not a failure.**
 
-## SQL
+## Embedding drain
 
-Use `omatic_execute_sql` only for queries that do not have a first-class tool. Set `confirm_destructive=true` only after the operator confirms the destructive action.
+`scripts/embed-drain.mjs` is a standalone operator script, not a plugin tool. It
+speaks the provider named in `factory_config` and covers both tiers:
+
+```bash
+OMATIC_PROJECT_ROOT=/path/to/factory node scripts/embed-drain.mjs
+OMATIC_PROJECT_ROOT=/path/to/factory node scripts/embed-drain.mjs --watch
+```
+
+It refreshes only admitted Tier 1 and Tier 2 rows already present in
+`brain.semantic_index` and `brain.document_chunks`. It does not admit memory,
+resolve contradictions, promote canon, retire records, or decide truth.
+
+## Tools this plugin provides
+
+- `omatic_select_factory` — pin the factory. **Always first.**
+- `omatic_resolve_factory` — confirm what resolved, and why.
+- `omatic_runtime_status` — the measured Node runtime.
+- `omatic_usage_guide` — what the plugin does and where DB work goes.
+
+That is the whole surface. The SQL, memory, task, decision, probe, work-claim,
+embedding-status and connection-CRUD tools were **removed in 5.0.0** and return
+`Unknown tool`. They are gone, not deprecated — use Conductor.

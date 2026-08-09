@@ -91,7 +91,7 @@ detail behind normal/audit or a short-TTL green-check cache.
 Cache recently-green non-critical checks with a short TTL; invalidate on warning, version
 drift, or explicit audit request.
 
-**Owner:** Probot. **Builds against:** the O-Matic startup runner contract (`omatic_factory_startup_run`).
+**Owner:** Probot. **Builds against:** the startup battery Probot runs itself through Conductor `factory_query`. (Superseded detail: this was `omatic_factory_startup_run`, a plugin tool, until omatic-server-connection 5.0.0 removed the plugin's database surface.)
 **Acceptance:** fast wake skips heavy detail yet still catches a red safety check; audit runs the full battery.
 
 ## D — O-Matic WordPress Factory plugin scaffold

@@ -18,7 +18,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const pluginRoot = resolve(new URL("..", import.meta.url).pathname);
-const connections = require(join(pluginRoot, "server/connections.js"));
+const factoryMod = require(join(pluginRoot, "server/factory.js"));
 
 let failed = 0;
 const ok = (cond, msg) => {
@@ -38,11 +38,11 @@ for (const key of ["OMATIC_PLATFORM", "OMATIC_PROJECT_ROOT", "OMATIC_FACTORY_JSO
 // detectPlatform is module-private. Read it out of source rather than widening
 // the export surface for a test; the slice is asserted so a refactor that moves
 // the function fails loudly instead of silently testing nothing.
-const src = readFileSync(join(pluginRoot, "server/connections.js"), "utf8");
+const src = readFileSync(join(pluginRoot, "server/factory.js"), "utf8");
 const detectStart = src.indexOf("function detectPlatform");
 const resolvedStart = src.indexOf("function resolvedOrNull");
 const resolvedEnd = src.indexOf("function loadProjectContext");
-ok(detectStart >= 0, "detectPlatform() is present in connections.js");
+ok(detectStart >= 0, "detectPlatform() is present in factory.js");
 ok(resolvedStart > detectStart && resolvedEnd > resolvedStart, "resolvedOrNull() follows it and is extractable");
 if (detectStart < 0 || resolvedEnd < 0) {
   console.log("\nsmoke-platform-detect FAILED: could not locate functions");
@@ -81,15 +81,15 @@ writeFileSync(
 const state = mkdtempSync(join(tmpdir(), "omatic-detect-state-"));
 const base = { OMATIC_PROJECT_ROOT: root, OMATIC_STATE_DIR: state, HOME: state };
 
-const detected = connections.loadProjectContext({ ...base, CLAUDE_PLUGIN_ROOT: "/r" });
+const detected = factoryMod.loadProjectContext({ ...base, CLAUDE_PLUGIN_ROOT: "/r" });
 ok(detected.platform_profile === "cowork", `detection outranks the factory.json literal (got ${detected.platform_profile})`);
 ok(detected.platform_profile_source === "host detection", `source names detection (got ${detected.platform_profile_source})`);
 
-const overridden = connections.loadProjectContext({ ...base, OMATIC_PLATFORM: "claude-desktop" });
+const overridden = factoryMod.loadProjectContext({ ...base, OMATIC_PLATFORM: "claude-desktop" });
 ok(overridden.platform_profile === "claude-desktop", "an explicit OMATIC_PLATFORM still wins");
 ok(overridden.platform_profile_source === "OMATIC_PLATFORM", "source names the env override");
 
-const fromFile = connections.loadProjectContext({ ...base });
+const fromFile = factoryMod.loadProjectContext({ ...base });
 ok(fromFile.platform_profile === "claude-code", "unrecognisable host falls back to factory.json");
 ok(fromFile.platform_profile_source === "factory.json", "source names the file, so a capture can discount it");
 

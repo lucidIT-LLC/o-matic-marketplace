@@ -1,5 +1,117 @@
 # Changelog
 
+## 5.0.0 — 2026-08-09
+
+### Breaking — this plugin is no longer a database client
+
+The connector kept its own PostgreSQL client: it read credentials out of
+`.omatic/factory.json`, opened pools, negotiated TLS, and served 18 tools that
+ran SQL. All of that is **removed**. The plugin now resolves and pins the
+factory, ships its skills, and nothing else.
+
+**Removed tools.** These are deleted, not deprecated. Calling one returns
+`Unknown tool` and fails closed — there is no stub that returns "unsupported",
+because a stub is a call site with no implementation and that is precisely the
+defect class this factory has spent its time removing.
+
+- SQL: `omatic_execute_sql`
+- Memory and retrieval: `omatic_search_memory`, `omatic_embedding_status`
+- Startup and health: `omatic_factory_startup`, `omatic_factory_startup_run`,
+  `omatic_factory_health_check`
+- Records: `omatic_list_tasks`, `omatic_record_decision`,
+  `omatic_record_session_event`, `omatic_record_probe_result`,
+  `omatic_claim_work`, `omatic_release_work`
+- Connection CRUD: `omatic_add_connection`, `omatic_edit_connection`,
+  `omatic_remove_connection`, `omatic_test_connection`,
+  `omatic_list_connections`, `omatic_set_active_connection`
+- Every pinned per-connection variant: `omatic_execute_sql:{name}`,
+  `omatic_search_memory:{name}`, `omatic_list_tasks:{name}`
+
+**What survives** — the capability only this plugin can provide, because it is
+the only component that sees the host's project context:
+
+- `omatic_select_factory` — pin a project root or factory.json path, persisted
+  across restarts. Required on every host; the plugin's working directory is
+  host-dependent and is not the project folder.
+- `omatic_resolve_factory` — confirm what resolved, and why each candidate root
+  was accepted or rejected. Rule #288 names this as the startup call.
+- `omatic_runtime_status` — the measured Node runtime.
+- `omatic_usage_guide` — rewritten; it now describes what the plugin does and
+  where database work goes.
+
+All bundled skills ship unchanged in scope: Probot
+(`omatic-server-connection:orch-o-matic-probot`) remains the operator-facing
+factory entry point, alongside Fred and Data. Their text is rewritten to drive
+Conductor rather than the removed tools.
+
+### Where database access went
+
+**Conductor**, a macOS app that holds every factory credential in the Mac
+Keychain and grants them per paired app over MCP on `https://localhost:8438`:
+
+| Need | Call |
+| --- | --- |
+| SQL against a granted connection | `factory_query` — Conductor holds the credential; the caller never sees it. Destructive statements refuse unless `confirm_destructive` is true. |
+| What this app was granted | `connections_list` — and how many connections exist that it was not granted. |
+| A query vector for retrieval | `embed_query` — 768-d, on the weights the corpus was embedded under. |
+
+Conductor's connection names are the **operator-facing** ones and differ from
+the plugin's old ones: **o-MATIC Home Office** (was `omatic`), **Commons** (was
+`kb`), **About Jimmy** (was `aboutjimmy`), plus **Benecard**, **lucidIT Corp**,
+**Practically Adventist** and **theNest**.
+
+Two things that are easy to get wrong:
+
+- `fn_search_semantic` and `fn_search_documents` take `p_query_model_version`
+  and refuse a weights mismatch (task #222). Get the vector from `embed_query`
+  and pass it. FTS-only retrieval is a reportable degraded state, not a normal
+  answer.
+- *"This app was not granted access to X"* is the pairing grant working. It is a
+  **refusal**, never an empty result — report it as one.
+
+### Removed — credential handling (task #209)
+
+The plugin no longer reads, writes or holds a database credential anywhere.
+
+- `server/connections.js` is deleted. Its factory-resolution half moved to
+  `server/factory.js` unchanged; the connection manager, DSN parser, TLS
+  negotiation ladder, pool cache, per-connection permission layer and
+  `writeFactoryConfig` went with the tools that used them.
+- **The `pg` dependency is gone**, along with its 13 transitive packages, from
+  `package.json`, the lockfile and the vendored `node_modules`. The shipped
+  runtime no longer contains a database driver.
+- The `OMATIC_CONNECTION_PASSWORDS` / `OMATIC_CONNECTION_USERNAMES` environment
+  ingest path is gone.
+- The plugin never writes to `.omatic/factory.json` at all now — it only reads
+  identity fields from it.
+- `omatic_resolve_factory` reports `legacy_connection_fields`: the **key names**
+  of any pre-5.0.0 connection fields still sitting in a factory.json, so an
+  operator is told to move them into Conductor and delete them. Key names only —
+  no value is read, returned or logged, and the smoke suite asserts that a
+  planted secret never appears in any response.
+
+### Changed
+
+- The MCP `instructions` block, every tool description, the usage guide, the
+  Resources and Prompts, the README and the bundled skills all named tools that
+  no longer exist. Each now points at Conductor, and gives its operator-facing
+  connection names rather than the plugin's old internal ones.
+- Resources cut from five to two (`omatic://usage-guide`, `omatic://factory`);
+  `omatic://connections`, `omatic://tasks` and `omatic://embedding-status`
+  wrapped deleted handlers and would have errored on read. Prompts cut from four
+  to two.
+- An unresolvable factory is no longer a **fatal boot error**. The server starts,
+  publishes its four tools, and `omatic_select_factory` is how the operator
+  fixes it. Exiting used to leave the host with no tool surface and nothing to
+  repair it with.
+- `scripts/smoke-startup-modes.mjs` (831 assertions) is replaced by
+  `scripts/smoke-tool-surface.mjs`. Its subjects — startup packet formatting,
+  probe recency, connection CRUD, TLS negotiation, the permission chokepoint —
+  were all deleted, so the tests were deleted rather than weakened until they
+  passed. The new suite guards the **negative** half: that no DB tool is
+  published, that every removed name fails closed pointing at Conductor, that no
+  source file requires `pg`, and that rule #259's no-walk-up still holds.
+
 ## 4.0.0 — 2026-08-08
 
 ### Breaking

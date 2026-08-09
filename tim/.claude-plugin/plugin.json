@@ -1,6 +1,6 @@
 {
   "name": "tim",
-  "version": "4.0.3",
+  "version": "4.0.4",
   "license": "MIT",
   "description": "Tool Optimizer. Tim scopes which MCP connectors a project actually needs, documents them from live schemas, and makes sure agents use the right tool correctly on the first try.",
   "author": {

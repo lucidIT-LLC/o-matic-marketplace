@@ -1,54 +1,101 @@
 ---
-description: Add or update a database connection for this project's O-Matic Server plugin. Walks through naming the connection and entering credentials, test-connects before writing, and confirms what to do next.
+description: Point this project at its O-Matic factory. Pins the factory root, confirms it resolved, and shows which factory databases Conductor has granted this app.
 disable-model-invocation: true
-argument-hint: [connection-name]
+argument-hint: [project-root]
 ---
 
-# O-Matic Server — Connection Setup
+# O-Matic Server — Project Setup
 
-You are helping the operator add (or update) a database connection in **this project's** `.omatic/factory.json`. Each project reaches only the databases its own `.omatic/factory.json` declares — that isolation is intentional. Do not add connections to other projects.
+You are helping the operator connect **this project** to its O-Matic factory.
+
+**Read this before you start.** As of plugin 5.0.0 this command no longer
+collects database credentials, and there is no tool here that can accept one.
+The connector is not a database client: it holds no credentials, opens no
+connections and runs no SQL. Credentials live in **Conductor**, in the macOS
+Keychain, granted per paired app.
+
+So this command does two things — pin the factory, and report what the databases
+say back. If the operator wants to add or change a *database connection*, that
+happens in Conductor, and **they do it themselves in Conductor's own UI.**
 
 ## Steps
 
-1. **Connection name.** If the operator passed an argument, use it as the connection name. Otherwise ask for one. Lowercase letters, numbers, and hyphens only.
+1. **Pin the factory.** If the operator passed an argument, use it as the project
+   root; otherwise ask for the absolute path to the project folder that contains
+   `.omatic/factory.json`.
 
-   The name becomes the suffix on the three pinned tool families —
-   `omatic_execute_sql:{name}`, `omatic_search_memory:{name}`, and
-   `omatic_list_tasks:{name}`. **Keep it short.** Codex enforces a 64-byte
-   ceiling on the fully namespaced tool name and silently truncates past it, so
-   a long connection name causes those pinned variants to be omitted from the
-   published surface. The unsuffixed tool plus `omatic_set_active_connection`
-   always covers the same ground, and any omission is disclosed on the base
-   tool's description.
+   ```
+   omatic_select_factory(project_root="/absolute/path/to/the/project")
+   ```
 
-2. **Show what's already configured.** Call `omatic_list_connections` and show the operator this project's current connections, so they don't add a duplicate by accident.
+   This is required on every host, not a convenience. The plugin's process
+   working directory is **host-dependent and is not the project folder** — on
+   Cowork it is the session scratch directory, elsewhere the plugin install
+   root. Re-mounting the folder in the host UI does **not** fix it: the host
+   mount and the plugin process cwd are independent. Factory discovery also
+   never walks up the directory tree (rule #259), so a `factory.json` in a parent
+   folder is deliberately invisible.
 
-3. **Gather credentials.** Ask for the database connection details. Accept either:
-   - a full PostgreSQL DSN — `postgresql://user:password@host:port/database`, or
-   - discrete fields: `host`, `port` (default 5432), `database`, `user`, `password`, `ssl_mode`.
+   The selection is persisted and restored on the next start, so this is a
+   once-per-project act, not a once-per-session one.
 
-   `ssl_mode` defaults to `require` and is **never inferred from the host
-   address**. The old behavior guessed `disable` for `100.x` Tailscale hosts;
-   that inference was removed because a guessed SSL mode is a silent security
-   decision. If the target needs something other than `require`, ask the
-   operator to state it explicitly — `disable`, `require`, `verify-ca`, or
-   `verify-full`.
+2. **Confirm it resolved.** Call `omatic_resolve_factory`.
 
-   Ask one thing at a time. Keep it conversational.
+   - Check `factory_id` is the factory the operator expected.
+   - Check `factory_file` points at this project's `.omatic/factory.json`.
+   - **If `factory_file` is `null`, stop.** The factory was not pinned. Report
+     the resolution trace — it names every candidate root tried and why each was
+     rejected — rather than continuing against an unresolved factory.
 
-4. **Add it.** Call `omatic_add_connection` with the name and the credentials. Leave `test` at its default of `true` — the tool test-connects before it writes anything. **Do not set `test: false`** unless the operator explicitly asks you to.
+   If there is no `.omatic/factory.json` yet, create one. It carries **identity
+   only**:
 
-5. **Handle the result.**
-   - If the connection test fails, the tool writes nothing. Show the operator the error, help them correct the credentials, and try again.
-   - If it succeeds, confirm: the connection is now in `.omatic/factory.json`, and the new `omatic_execute_sql:{name}`, `omatic_search_memory:{name}`, and `omatic_list_tasks:{name}` variants are broadcast via `notifications/tools/list_changed`. **On Claude Code 2.1.0+ they appear immediately — no restart needed.**
-   - If the tool returns a `gitignore_warning`, surface it prominently — the operator must gitignore `.omatic/factory.json` so credentials are never committed.
+   ```json
+   {
+     "factory_id": "your-factory",
+     "server_name": "Your Factory",
+     "connection_profile": "default"
+   }
+   ```
 
-6. **Confirm next steps.** Verify with `omatic_resolve_factory`.
+   **It must not contain a host, user, password or `database_url`.** Nothing
+   reads them — a credential there is a credential at rest serving no purpose.
 
-   **On Codex, and on MCP clients older than Claude Code 2.1.0, tell the
-   operator to restart deliberately.** Those hosts ignore
-   `notifications/tools/list_changed`, are never prompted to update, and will
-   keep serving a cached tool list — the new connection's tools will simply not
-   be there, with nothing explaining why.
+3. **Report any leftover credentials.** `omatic_resolve_factory` returns a
+   `legacy_connection_fields` block. If `present` is true, it lists the **key
+   names** of pre-5.0.0 connection fields still sitting in the file (never their
+   values). Tell the operator plainly: move those into Conductor, then delete the
+   keys from `factory.json`.
 
-This command handles real database credentials. Never echo the password back in plain text. Never write credentials to any file other than via the `omatic_add_connection` tool.
+4. **Show what the databases will allow.** Call Conductor's `connections_list`.
+
+   Report two numbers, both of them meaningful:
+   - the connections this app **was granted**, by their operator-facing names;
+   - the count of connections that exist but were **not** granted.
+
+   That second number is the pairing grant working as designed, not a gap. If a
+   later query returns *"This app was not granted access to X"*, that is a
+   **refusal** — report it as one, naming the connection. Never report it as
+   "no data" or an empty result.
+
+   Conductor's names are the operator-facing ones and differ from the plugin's
+   old internal names: **o-MATIC Home Office** (was `omatic`), **Commons** (was
+   `kb`), **About Jimmy** (was `aboutjimmy`), plus **Benecard**, **lucidIT
+   Corp**, **Practically Adventist**, **theNest**.
+
+5. **If a connection is missing or wrong**, hand it back to the operator. Say
+   which connection is needed and that it is added or amended in Conductor —
+   `connection_propose` / `connection_amend` / `connection_remove`, each approved
+   by the operator in Conductor's own interface.
+
+   **Do not ask the operator to paste a password, and do not accept one if it is
+   offered.** There is nowhere here to put it that would be safe or useful. If a
+   credential appears in the conversation, tell the operator it should be
+   entered in Conductor instead, and treat the pasted value as compromised.
+
+6. **Confirm next steps.** Verify with `omatic_resolve_factory` once more, then
+   hand back to Probot for factory startup.
+
+   Note that an MCP server is loaded at host process start and never
+   hot-reloads. If the plugin was just installed or updated, the operator must
+   fully restart the host — a new conversation is not enough.

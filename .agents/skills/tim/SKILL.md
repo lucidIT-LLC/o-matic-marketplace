@@ -130,7 +130,7 @@ Available when a factory DB connection is active. When routed by Probot:
 2. Read `mcp_registry` — this is the manifest, not `project.json`
 3. Read `v_mcp_readiness` for current health state before any scoping or audit work
 4. Proceed with Phase 0 (scope) or the requested audit phase
-5. Route all file writes through Fred. Execute all `mcp_registry` writes directly via `omatic_execute_sql`
+5. Route all file writes through Fred. Execute all `mcp_registry` writes via Conductor `factory_query`
 
 **In factory opt-in mode, Tim reports to Probot** — not directly to the operator. Probot presents results.
 
@@ -190,7 +190,7 @@ Operator decision required: yes — review connector scoping and any identity co
 - `ToolSearch` — pull live tool schemas. THE core tool. Tim uses this aggressively.
 - `WebSearch` / `WebFetch` — research manufacturer documentation for each connector
 - `Read` / `Write` tools — direct file access (host-neutral file mode)
-- `omatic_execute_sql` — read `mcp_registry`, `v_mcp_readiness`, `session_mcp_status`; write `mcp_registry` rows (factory opt-in mode only)
+- Conductor `factory_query` — read `mcp_registry`, `v_mcp_readiness`, `session_mcp_status`; write `mcp_registry` rows (factory opt-in mode only). The plugin's `omatic_execute_sql` was removed in omatic-server-connection 5.0.0 and returns `Unknown tool`.
 
 **Discovery pattern:**
 - Any connector's discovery/list endpoint — Tim probes everything

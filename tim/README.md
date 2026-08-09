@@ -80,7 +80,7 @@ Tim returns structured output with `connectors_active[]`, `connectors_inactive[]
 ## O-Matic factory opt-in
 
 When a factory DB connection is active, Tim can:
-- Read and write `mcp_registry` directly via `omatic_execute_sql`
+- Read and write `mcp_registry` via Conductor `factory_query` (the plugin's `omatic_execute_sql` was removed in omatic-server-connection 5.0.0)
 - Query `v_mcp_readiness` for live connector health
 - Set portability columns (`criticality`, `fallback_behavior`, `platform_availability`) on every registry row
 
