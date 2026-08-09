@@ -147,6 +147,17 @@ async function runOnce(query, tenant, endpoint, token) {
   let embedded = 0;
   let skipped = 0;
   for (const tier of TIERS) {
+    // System 5 provenance column, present only on converted factories. Probed
+    // once per tier so one drain binary serves pre-5 and System 5 schemas —
+    // a drain that assumes the column would fail every legacy factory, and a
+    // drain that never writes it would strand provenance on converted ones.
+    const runtimeColProbe = await query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_schema || '.' || table_name = $1 AND column_name = 'embedding_runtime'`,
+      [tier.table]
+    );
+    const hasRuntimeCol = runtimeColProbe.rows.length > 0;
+
     const pending = await query(
       `SELECT id, ${tier.textColumn} AS text FROM ${tier.table}
         WHERE tenant_id = $1 AND (embedding IS NULL OR embedding_stale)
@@ -174,12 +185,26 @@ async function runOnce(query, tenant, endpoint, token) {
         console.log(`  ${row.id}: dry-run ok${result.truncated ? " (TRUNCATED)" : ""}`);
         continue;
       }
-      await query(
-        `UPDATE ${tier.table}
-            SET embedding = $1::vector, model_version = $2, embedded_at = now(), embedding_stale = false
-          WHERE id = $3`,
-        [toVectorLiteral(vec), wantIdentity, row.id]
-      );
+      // Runtime provenance (System 5): which execution runtime produced this
+      // vector — coreml/onnx/cuda/directml — as metadata BESIDE model_version,
+      // never inside it. Old providers omit the field; write NULL rather than
+      // guessing, and never fail the drain over missing provenance.
+      if (hasRuntimeCol) {
+        await query(
+          `UPDATE ${tier.table}
+              SET embedding = $1::vector, model_version = $2, embedded_at = now(), embedding_stale = false,
+                  embedding_runtime = $4
+            WHERE id = $3`,
+          [toVectorLiteral(vec), wantIdentity, row.id, result.runtime ?? null]
+        );
+      } else {
+        await query(
+          `UPDATE ${tier.table}
+              SET embedding = $1::vector, model_version = $2, embedded_at = now(), embedding_stale = false
+            WHERE id = $3`,
+          [toVectorLiteral(vec), wantIdentity, row.id]
+        );
+      }
       embedded++;
       if (result.truncated) console.log(`  ${row.id}: embedded, TRUNCATED — source exceeds provider context`);
     }
