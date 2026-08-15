@@ -79,6 +79,21 @@ const FRAGMENTS = [
 const pluginsRoot = resolve(repoRoot, "..");
 let stale = 0;
 
+// A consumer path is "<repo>/<path/inside/repo>". If <repo> is not present at
+// all, this workspace simply does not contain that repository — a single-repo
+// checkout, which is what CI does and what most contributors have. That is
+// UNKNOWABLE, not wrong, and failing on it makes this check permanently red for
+// a reason that has nothing to do with drift. A gate that is always red gets
+// ignored, and then it catches nothing when it finally matters.
+//
+// If the repo directory IS present and the file is missing, that is a real gap
+// and still fails.
+function consumerRepoPresent(rel) {
+  const repoDir = rel.split("/")[0];
+  return existsSync(resolve(pluginsRoot, repoDir));
+}
+let absentRepos = 0;
+
 for (const skill of SHARED) {
   if (!selected(skill.name)) continue;
   if (!existsSync(skill.source)) {
@@ -92,7 +107,12 @@ for (const skill of SHARED) {
     // A consumer that is not present is a reportable gap, not a stale copy. Treating
     // it as stale used to make apply-mode throw ENOENT inside copyFileSync.
     if (!existsSync(target)) {
-      console.error(`MISSING consumer: ${skill.name} -> ${rel} (not checked out in this workspace)`);
+      if (!consumerRepoPresent(rel)) {
+        absentRepos += 1;
+        console.log(`skip:  ${skill.name} -> ${rel} (repo not in this workspace — unknowable, not stale)`);
+        continue;
+      }
+      console.error(`MISSING consumer: ${skill.name} -> ${rel} (repo IS present; the file is gone)`);
       process.exitCode = 1;
       continue;
     }
@@ -129,7 +149,12 @@ for (const frag of FRAGMENTS) {
   for (const rel of frag.consumers) {
     const target = resolve(pluginsRoot, rel);
     if (!existsSync(target)) {
-      console.error(`MISSING consumer: ${frag.name} -> ${rel}`);
+      if (!consumerRepoPresent(rel)) {
+        absentRepos += 1;
+        console.log(`skip:  ${frag.name} -> ${rel} (repo not in this workspace — unknowable, not stale)`);
+        continue;
+      }
+      console.error(`MISSING consumer: ${frag.name} -> ${rel} (repo IS present; the file is gone)`);
       process.exitCode = 1;
       continue;
     }
@@ -157,4 +182,7 @@ for (const frag of FRAGMENTS) {
 }
 
 if (check && stale > 0) process.exitCode = 1;
+if (absentRepos > 0) {
+  console.log(`note:  ${absentRepos} consumer(s) skipped — their repo is not in this workspace`);
+}
 if (!dryRun && !check) console.log(`done — ${stale} consumer(s) updated`);

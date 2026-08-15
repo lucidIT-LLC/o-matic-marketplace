@@ -38,3 +38,47 @@ jobs:
           node-version: "20"
       - name: committed node_modules matches the lockfile
         run: node scripts/verify-vendored-deps.mjs
+
+  # Change-log item 22 / task #342: THE CHECKS EXISTED AND NOTHING RAN THEM.
+  #
+  # audit-installed-skill-duplicates, version-align and the two sync scripts
+  # were all written, all working, and all manual. Measured live: one role at
+  # three versions across three manifest sources; another in three copies
+  # differing on disk; two shared skills whose frontmatter `name` did not match
+  # their parent directory — a SILENT load failure on VS Code. Every one of
+  # those was detectable by a script sitting in this repo.
+  #
+  # A check that only runs when someone remembers is not a control. These two
+  # are pure file comparison — no DB, no network, no host state — so there was
+  # never a reason for them to be manual.
+  skill-sameness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # sync-shared-skills resolves sibling repos by directory NAME relative
+          # to the workspace root, so the checkout must land in a directory
+          # actually called o-matic-marketplace. Checked out anywhere else it
+          # reports every consumer MISSING and passes on an empty set — a
+          # vacuous pass, which is the failure class this job exists to catch.
+          path: o-matic-marketplace
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: shared skill fragments match canonical
+        working-directory: o-matic-marketplace
+        run: node scripts/sync-shared-skills.mjs --check
+      - name: bundled skills match their source
+        working-directory: o-matic-marketplace
+        run: node scripts/sync-bundled-skills.mjs --check
+      # Guard against the vacuous pass directly: if the check reports nothing at
+      # all, the job has proved nothing. Assert it actually examined consumers.
+      - name: the check examined a non-empty consumer set
+        working-directory: o-matic-marketplace
+        run: |
+          n=$(node scripts/sync-shared-skills.mjs --check 2>&1 | grep -c '^ok:' || true)
+          echo "consumers verified in sync: $n"
+          if [ "$n" -lt 1 ]; then
+            echo "::error::sync-shared-skills examined ZERO consumers — passing on an empty set proves nothing"
+            exit 1
+          fi
