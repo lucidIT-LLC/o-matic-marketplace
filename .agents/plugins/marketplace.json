@@ -6,7 +6,8 @@
   },
   "metadata": {
     "description": "The O-Matic marketplace — every O-Matic plugin in one catalog. The o-matic.ai marketplace.",
-    "homepage": "https://o-matic.ai"
+    "homepage": "https://o-matic.ai",
+    "version": "2026-08-15"
   },
   "plugins": [
     {
@@ -38,7 +39,7 @@
     },
     {
       "name": "jo",
-      "version": "4.0.2",
+      "version": "4.0.3",
       "source": "./jo",
       "description": "Writing Coach. Jo coaches writers through feedback, structure, style, and voice development. Serves creative writers and professional communicators equally.",
       "author": {
@@ -50,7 +51,7 @@
     },
     {
       "name": "tim",
-      "version": "4.0.4",
+      "version": "4.0.5",
       "source": "./tim",
       "description": "Tool Optimizer. Tim scopes MCP connectors, documents them from live schemas, and makes sure agents use the right tool correctly on the first try.",
       "author": {
@@ -62,7 +63,7 @@
     },
     {
       "name": "rimmer",
-      "version": "2.1.1",
+      "version": "2.1.2",
       "source": "./rimmer",
       "description": "Evidence-first evaluator for O-Matic skills, agents, factory workflows, and plugin releases.",
       "author": {
@@ -74,7 +75,7 @@
     },
     {
       "name": "o-matic-wordpress-factory",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "source": "./o-matic-wordpress-factory",
       "description": "O-Matic WordPress Factory plugin with bundled brand, build, writing, and visual skills plus separate WordPress and Elementor MCP connectors.",
       "author": {

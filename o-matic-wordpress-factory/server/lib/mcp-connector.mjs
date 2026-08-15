@@ -1073,6 +1073,20 @@ function resolveFactoryRoot(factoryRoot) {
   const explicit = factoryRoot || envValue("OMATIC_PROJECT_ROOT") || envValue("PROJECT_ROOT") || "";
   if (explicit) return resolve(explicit);
 
+  // Codex binds no project dir into cwd — the launcher forces cwd=${PLUGIN_ROOT}
+  // (see .mcp.json) — and it does not set OMATIC_PROJECT_ROOT. It exports the
+  // workspace path in CODEX_WORKSPACE instead. Without this, a zero-config Codex
+  // factory walks up from the plugin install dir, finds no .omatic, and reports
+  // unconfigured while a perfectly good factory.json sits in the workspace.
+  //
+  // This mirrors omatic-server-connection/server/factory.js:detectPlatform,
+  // which already reads the same three. envValue strips an unresolved "${VAR}"
+  // literal, so a host that leaves the placeholder unsubstituted is treated as
+  // absent rather than resolving the factory root to the string "${CODEX_...}".
+  const codexWorkspace =
+    envValue("CODEX_WORKSPACE") || envValue("CODEX_PROJECT_ROOT") || envValue("CODEX_WORKSPACE_ROOT") || "";
+  if (codexWorkspace) return resolve(codexWorkspace);
+
   let current = process.cwd();
   for (;;) {
     try {
