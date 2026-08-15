@@ -56,7 +56,7 @@
       "version": "7.1.2",
       "signature": 9,
       "canonical_skill": "smith/skills/crit-o-matic-smith/SKILL.md",
-      "codex_skill": ".agents/skills/smith/SKILL.md",
+      "codex_skill": ".agents/skills/crit-o-matic-smith/SKILL.md",
       "claude_plugin": "smith/.claude-plugin/plugin.json",
       "codex_plugin": "smith/.codex-plugin/plugin.json",
       "triggers": [
@@ -125,7 +125,7 @@
       "version": "4.0.2",
       "signature": 6,
       "canonical_skill": "tim/skills/tool-o-matic-tim/SKILL.md",
-      "codex_skill": ".agents/skills/tim/SKILL.md",
+      "codex_skill": ".agents/skills/tool-o-matic-tim/SKILL.md",
       "claude_plugin": "tim/.claude-plugin/plugin.json",
       "codex_plugin": "tim/.codex-plugin/plugin.json",
       "triggers": [

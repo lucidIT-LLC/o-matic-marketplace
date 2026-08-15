@@ -59,7 +59,7 @@ fallback: [one-line behavior when unavailable]
 
 **Claude Code:** Place `skills/tool-o-matic-tim/SKILL.md` in your skills directory.
 
-**Codex:** Copy `.agents/` from the repo root into your project, or place `skills/tool-o-matic-tim/SKILL.md` at `.agents/skills/tim/SKILL.md` manually.
+**Codex:** Copy `.agents/` from the repo root into your project, or place `skills/tool-o-matic-tim/SKILL.md` at `.agents/skills/tool-o-matic-tim/SKILL.md` manually.
 
 ## Canonical invocation
 

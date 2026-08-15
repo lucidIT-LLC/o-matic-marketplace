@@ -71,6 +71,13 @@ jobs:
       - name: bundled skills match their source
         working-directory: o-matic-marketplace
         run: node scripts/sync-bundled-skills.mjs --check
+      # Task #310. A SKILL.md whose frontmatter `name` disagrees with its parent
+      # directory is SILENTLY ABSENT on VS Code — no error, no warning, the skill
+      # just is not there. Two of four .agents skills shipped that way and it was
+      # found by hand, not by anything running.
+      - name: skill frontmatter name matches its directory
+        working-directory: o-matic-marketplace
+        run: node scripts/verify-skill-names.mjs
       # Guard against the vacuous pass directly: if the check reports nothing at
       # all, the job has proved nothing. Assert it actually examined consumers.
       - name: the check examined a non-empty consumer set

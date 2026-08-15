@@ -50,7 +50,7 @@ VERDICT: [one direct line]
 Use Smith to stress-test this plan: [paste plan]
 ```
 
-**Codex:** Copy `.agents/` from the repo root into your project, or place `skills/crit-o-matic-smith/SKILL.md` at `.agents/skills/smith/SKILL.md` manually.
+**Codex:** Copy `.agents/` from the repo root into your project, or place `skills/crit-o-matic-smith/SKILL.md` at `.agents/skills/crit-o-matic-smith/SKILL.md` manually.
 
 ## Canonical invocation
 
