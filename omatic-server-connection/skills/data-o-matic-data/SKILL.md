@@ -344,8 +344,44 @@ keyword-only retrieval where no Conductor is installed. Conversion is a sequence
 advisory (FA-2026-05), not an ad-hoc fix; never half-convert a factory to make one
 query work.
 
-Doctrine lives in `_omatic/blueprints/`: `system-5-plan.md`, `conductor-v1.5.md`,
-`system-5-compliance-register.md`, `marketplace-change-log.md`.
+## What good looks like — the data doctrine
+
+Detection tells you whether a factory is System 5. **KB-0002, *Factory Vector
+Memory Design*** (Commons, design-guide, v2.0.0) tells you what a correct one is
+built from. Read it before designing or repairing a tier — not after.
+
+The parts you are expected to know without opening it:
+
+- **The mandatory column set on every vector-bearing table:** `embedding`,
+  `model_version`, `embedded_at`, `embedding_stale`, `embedding_runtime`. Missing
+  any one of them means the table cannot participate in a drain — a table with a
+  vector column and nothing else is storage, not memory. Measured 2026-08-15: the
+  drain resolves tier tables by *contract shape*, so a table lacking these is
+  correctly skipped rather than corrupted, which is how About Jimmy's
+  `query_embedding_cache` and two held evaluation sets survive a drain untouched.
+- **Index pairing:** partial HNSW on `embedding WHERE embedding IS NOT NULL`,
+  plus a GIN index on a **precomputed `tsv` column** — never inline
+  `to_tsvector()`. Hybrid retrieval needs both halves; one alone is not the
+  contract.
+- **Tenant scoping is per-corpus, not universal.** `brain.*` carries `tenant_id`;
+  `kb.*` in the shared doctrine library has **no tenant column at all**. Code that
+  assumes one throws on Commons. This is a real defect that shipped — the drain
+  pinned `tenant_id = 'omatic'` and would have failed on Commons even after its
+  schema hardcode was fixed.
+- **The `factory_config` embedding block** declares provider, endpoint, model and
+  dimension. It is a *declaration*, not proof: a complete, correct-looking
+  embedding contract can be entirely inert. Call it and read what comes back.
+
+**Row counts prove storage. Only a query with a real vector distance proves
+retrieval.** A corpus that is 100% embedded and never queried with a vector is a
+filing cabinet.
+
+Doctrine lives in Commons and is the authority: **KB-0051** (the Blueprint —
+System 5.2 is a chapter of it, amendment v2.6.0, not a separate book) and
+**KB-0002** (this data doctrine). The files in `_omatic/blueprints/` —
+`system-5-plan.md`, `conductor-v1.5.md`, `system-5-compliance-register.md`,
+`marketplace-change-log.md` — are working notes derived from those, and they
+carry no version, hash or gate. **When they disagree with Commons, Commons wins.**
 <!-- shared:system-5-detection end -->
 
 ***

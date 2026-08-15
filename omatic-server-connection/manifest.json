@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "omatic-server-connection",
   "display_name": "O-Matic Server Connection",
-  "version": "5.4.0",
+  "version": "5.5.0",
   "description": "Connects a host to an O-Matic Server factory brain and ships Probot, Fred, Data and Embedder.",
   "long_description": "The MCP server that connects Claude Desktop to an O-Matic Server. One install serves many factories through a per-project .omatic/factory.json. Ships the Probot (orchestrator), Fred (storage and connection CRUD), Data (analyst and DBA) and Embedder (background vector refresh) skills. Connects to a factory brain; does not bundle a database.",
   "author": {
