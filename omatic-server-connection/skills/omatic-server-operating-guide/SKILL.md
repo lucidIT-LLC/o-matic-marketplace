@@ -5,7 +5,7 @@ description: Use when operating an O-Matic Server project through the plugin —
 
 # O-Matic Server — Operating Guide
 
-<!-- version: 5.12.0 | sig: 2 | author: James Walker | package: O-Matic Server Connection -->
+<!-- version: 5.13.0 | sig: 2 | author: James Walker | package: O-Matic Server Connection -->
 
 This plugin is project-centric and, as of 5.0.0, **not a database client**. It
 resolves and pins the factory. Everything that touches a database goes through
@@ -98,13 +98,17 @@ An **empty connection list in `factory.json` is correct, not a failure.**
 
 ## Embedding drain
 
-`scripts/embed-drain.mjs` is a standalone operator script, not a plugin tool. It
-speaks the provider named in `factory_config` and covers both tiers:
+**There is no drain script in this plugin. Draining is Conductor's job.**
 
-```bash
-OMATIC_PROJECT_ROOT=/path/to/factory node scripts/embed-drain.mjs
-OMATIC_PROJECT_ROOT=/path/to/factory node scripts/embed-drain.mjs --watch
-```
+`scripts/embed-drain.mjs` was RETIRED 2026-08-15 to `scripts/_retired/`. It could not
+run: it imported `server/connections.js`, deleted in 5.0.0 when the plugin stopped
+being a database client. `npm run check` syntax-checked it and reported green for a
+full release cycle — a check that would pass on a broken system is not a check.
+
+**Do not hand an operator a command from this section that no longer exists.** The
+drain runs inside Conductor, on-device Core ML, resolving tier tables by contract
+shape. If a corpus is stale, that is a Conductor refresh or a scheduling gap
+(tasks #314, #358) — never a missing script.
 
 It refreshes only admitted Tier 1 and Tier 2 rows already present in
 `brain.semantic_index` and `brain.document_chunks`. It does not admit memory,

@@ -107,7 +107,7 @@ jobs:
       - name: the check examined the expected consumer set
         working-directory: o-matic-marketplace
         env:
-          EXPECTED_CONSUMERS: "9"
+          EXPECTED_CONSUMERS: "11"
         run: |
           n=$(node scripts/sync-shared-skills.mjs --check 2>&1 | grep -c '^ok:' || true)
           echo "consumers verified in sync: $n (expected $EXPECTED_CONSUMERS)"

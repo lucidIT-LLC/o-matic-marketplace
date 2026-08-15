@@ -1,3 +1,23 @@
+> ## ⛔ RETIRED — HISTORICAL RECORD, NOT CURRENT BEHAVIOUR
+>
+> **Banner added 2026-08-15.** These are the release notes for **3.1.0**. The plugin
+> ships **5.x**. Nothing in this file links from anywhere: no README, no CHANGELOG,
+> no workflow. It was a second record of a truth `CHANGELOG.md` already holds.
+>
+> **It names tools that no longer exist.** `omatic_execute_sql`,
+> `omatic_test_connection`, `omatic_list_connections` and others below were
+> **DELETED, not deprecated**, in 5.0.0 (decision #283) when the plugin stopped being
+> a database client. Calling one returns `Unknown tool`. Database access goes through
+> Conductor, which holds credentials in the macOS Keychain and grants them per paired
+> app.
+>
+> **Retained, not deleted**, per the Stuff You Should Forget procedure: a document
+> naming a removed mechanism is marked retired with its replacement, never silently
+> dropped. Read for history. Do not follow it, and do not cite it as current tool
+> surface — `server/tools.js` is.
+
+---
+
 # O-Matic Server Connection 3.1.0 — Release Notes
 
 Additive release. Nothing is removed, no call signature changes, and no

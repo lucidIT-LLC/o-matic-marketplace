@@ -498,7 +498,7 @@ Promotion requires source identity, owner, lifecycle state, task/session scope, 
 
 Embeddings are a background service responsibility. Postgres stores vectors; the provider named in `factory_config` produces them. The `embed-o-matic-embedder` skill contract was removed in 3.7.0, and `server/embedder-worker.js` was retired in 4.0.0 — it spoke the OpenAI REST shape against config keys the on-device migration removed, so on this factory it silently drained nothing.
 
-Its replacement is `scripts/embed-drain.mjs`: it reads the configured provider, covers Tier 1 and Tier 2, and refuses to write when the provider's weights or dimension disagree with `factory_config`. Note that an embedding *endpoint* is not a *drain* — something must still poll for stale rows and call it. Until that runs on a schedule, the corpus goes stale silently while every search keeps answering.
+Its replacement is **Conductor's own drain**, on-device Core ML, resolving tier tables by CONTRACT SHAPE — never by schema name (a `brain.*` hardcode fetches zero rows on a `kb.*` corpus and reports "Up to date") and never by vector type alone (query caches and held evaluation sets are `vector(768)` too, and draining either corrupts it). `scripts/embed-drain.mjs` was RETIRED 2026-08-15: it imported a module deleted in 5.0.0 and could not run. Note that an embedding *endpoint* is not a *drain* — something must still poll for stale rows and call it. Until drain-on-write ships (task #358), editing a document un-publishes it, and the corpus goes dark while every search keeps answering.
 
 When code (skill or operator) writes a Tier 3 row:
 1. INSERT/UPDATE the source row.

@@ -111,6 +111,23 @@ const FRAGMENTS = [
       // against 6-7 in the other three. It is the skill a converting operator
       // reads first, so it was the worst possible one to leave behind.
       "o-matic-marketplace/omatic-server-connection/skills/omatic-server-operating-guide/SKILL.md",
+      // Added 2026-08-15. Smith and Tim MAKE FACTORY-STATE CLAIMS and were not
+      // consumers, which is the structural cause of the worst finding in the
+      // Pass 2 sweep: Smith's audit standard demanded `embedding vector(1536)`
+      // and an `openai_api_key` in factory_config — the architecture System 5
+      // removed — while Data's copy of this fragment correctly called
+      // vector(1536) DECISIVE evidence of a pre-System-5 factory. Two shipped
+      // skills, opposite audit criteria, same column. Running Smith's audit
+      // reported every correct on-device factory as non-compliant and told the
+      // operator to reinstate a deleted credential.
+      //
+      // The fragment exists so that test cannot drift. The AUDITOR was not
+      // subscribed to it.
+      //
+      // Jo and Rimmer are deliberately NOT consumers: neither makes a claim
+      // about factory state, so the fragment would be noise in their context.
+      "o-matic-marketplace/smith/skills/crit-o-matic-smith/SKILL.md",
+      "o-matic-marketplace/tim/skills/tool-o-matic-tim/SKILL.md",
     ],
   },
 ];
