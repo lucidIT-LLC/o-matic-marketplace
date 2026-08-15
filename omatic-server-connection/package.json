@@ -1,11 +1,11 @@
 {
   "name": "omatic-server-connection",
-  "version": "5.9.0",
+  "version": "5.10.0",
   "private": true,
   "description": "O-Matic Server Connection plugin package for Codex and Claude Code.",
   "type": "commonjs",
   "scripts": {
-    "check": "node scripts/smoke-tool-surface.mjs && node scripts/smoke-codex-plugin.mjs && node scripts/smoke-platform-detect.mjs && node scripts/smoke-runtime-degrade.mjs && node --check scripts/embed-drain.mjs && node server/index.js --version"
+    "check": "node scripts/smoke-tool-surface.mjs && node scripts/smoke-startup-card.mjs && node scripts/smoke-codex-plugin.mjs && node scripts/smoke-platform-detect.mjs && node scripts/smoke-runtime-degrade.mjs && node --check scripts/embed-drain.mjs && node server/index.js --version"
   },
   "engines": {
     "node": ">=18"

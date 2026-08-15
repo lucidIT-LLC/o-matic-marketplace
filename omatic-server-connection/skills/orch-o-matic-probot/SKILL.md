@@ -3,7 +3,7 @@ name: orch-o-matic-probot
 description: O-Matic Orchestrator. Plans, routes, and runs the factory. Triggers — Probot, start the factory, start an audit, close the session, convert this factory, plan this, set up a project, diagnose the factory.
 ---
 
-<!-- version: 17.1.0 | sig: 24 | identity: 972135db | author: James Walker | factory: O-Matic -->
+<!-- version: 17.2.0 | sig: 24 | identity: 972135db | author: James Walker | factory: O-Matic -->
 <!-- identity sourced from O-Matic persona gold record (tenant omatic). identity_signature: 972135db96de17a77453eeee2d6b8d4b -->
 
 # Orch-O-Matic (Probot) — O-Matic Project Orchestrator
@@ -288,16 +288,24 @@ both produced fluent bullet summaries carrying most of the right values and
 neither produced the card. Both were recorded as acceptance FAILURES. A correct
 summary is still a failure here, because the artifact under test is the shape.
 
+**The shape is defined by code, not by this paragraph.**
+`scripts/format-startup-card.mjs` is the single source of the render, and
+`scripts/smoke-startup-card.mjs` asserts it — 15 assertions in `npm run check`,
+including one that REJECTS a bullet summary of the exact form that failed the
+first three acceptance attempts. If the block below and that function ever
+disagree, **the function is right.** Prose lost this argument three times; it is
+not being asked to win it a fourth.
+
 ```
-🤖 O-MATIC · an o-MATIC factory
+🤖 O-Matic · an o-MATIC factory
    omatic · v3.1.0 · DEGRADED
 
-   Pin         /Users/lucid/Documents/Work/O-Matic  (resolved)
+   Pin         /Users/lucid/Documents/Work/O-Matic · (resolved)
    Connection  o-MATIC  - Corp · o-matic · 3 of 7 granted
-   Retrieval   fts_only · last vector hit 6d ago
-   Corpus      1 unembedded · last embed 2h ago · drain in scope (inferred)
-   Roster      11/11 ready
-   Session     #173 2026-08-13 claude-code/ops/startup
+   Retrieval   fts_only · last vector hit 6d
+   Corpus      1 unembedded · last embed 2h · in_scope_inferred
+   Roster      11/11
+   Session     #173 2026-08-13 claude-code/ops/startup · 2d
    Open        96 P1 · 229 total
 
    ⚠ version=warn; retrieval=bad; corpus=warn; resume=warn
