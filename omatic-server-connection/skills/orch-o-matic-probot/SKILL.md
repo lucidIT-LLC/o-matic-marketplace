@@ -3,7 +3,7 @@ name: orch-o-matic-probot
 description: O-Matic Orchestrator. Plans, routes, and runs the factory. Triggers — Probot, start the factory, start an audit, close the session, convert this factory, plan this, set up a project, diagnose the factory.
 ---
 
-<!-- version: 16.0.0 | sig: 24 | identity: 972135db | author: James Walker | factory: O-Matic -->
+<!-- version: 17.0.0 | sig: 24 | identity: 972135db | author: James Walker | factory: O-Matic -->
 <!-- identity sourced from O-Matic persona gold record (tenant omatic). identity_signature: 972135db96de17a77453eeee2d6b8d4b -->
 
 # Orch-O-Matic (Probot) — O-Matic Project Orchestrator
@@ -177,9 +177,34 @@ STEP 3 — Startup battery (Conductor factory_query)
 |
 |- Open/anchor the session row in factory_sessions (same-day rows are REUSED;
 |  reuse is hygiene only and asserts nothing about how fresh any measurement is).
+|
+|- FIRST QUERY, ALWAYS, EVERY MODE:  SELECT * FROM v_startup_card
+|    ONE row, ~49 columns. It IS the startup report — factory identity and
+|    version, pin state, connection, retrieval and drain state, corpus counts,
+|    roster readiness, governance, last session, open counts, and a computed
+|    state of READY / DEGRADED / BLOCKED with state_reason and severity.
+|    Render it (§7b). Do not paraphrase it and do not re-derive its fields.
+|
+|    WHY IT LEADS: the card CANNOT COLLAPSE. It reaches every source through a
+|    correlated scalar subquery or LEFT JOIN LATERAL, so a brand-new factory
+|    returns ONE row saying factory_id=UNKNOWN, state=BLOCKED — which is the
+|    correct answer. v_startup_summary CROSS JOINs latest_session and therefore
+|    returns ZERO ROWS on a factory with no session history, and a missing
+|    startup view is a HALT condition. So the old view turns "this factory is
+|    new" into "this factory is broken" at the exact moment a conversion
+|    advisory sends an operator to run one (task #339).
+|
+|    The card also states what it CANNOT know rather than guessing: pin_state,
+|    connection_name and drain scope emit CLIENT_SUPPLIED or an *_inferred value.
+|    Fill those from STEP 1/STEP 2 — never let the card's honesty read as a gap.
+|
 |- Then query, every mode, fresh:
-|    v_startup_summary            resume point, open task totals, governance health,
-|                                 sop_index
+|    v_startup_summary            resume point, sop_index, governance detail.
+|                                 SECONDARY now, not the startup report. If it
+|                                 returns zero rows, that is task #339 — report
+|                                 it as a defect and CONTINUE on the card; it is
+|                                 no longer a halt, because the card already
+|                                 answered the question the halt existed to force.
 |    v_agent_agreement            EVERY skill. Never trimmed, never cached — it is
 |                                 the halt input.
 |    v_mcp_readiness_by_session   connector readiness
@@ -210,12 +235,16 @@ STEP 4 — Platform probe refinement + report
 |- If this host exposes additional live connector tools in the same session,
 |    perform lightweight checks and record each one the same way.
 |- A connector you did not measure THIS session is `untested`. Not OK.
-|- Report:
-|    "Probot: Factory mode active on [platform_profile]. [open_tasks] open tasks.
-|     Urgent: [urgent_count] | High: [high_count]
-|     Last session: [last_session_label]
-|     Red items: [red_items]
-|     Resume: [handoff_notes]"
+|- REPORT THE CARD (§7b). Same shape on every host, every mode. Do not compose
+|    a bespoke summary — a report that differs per host cannot be compared
+|    across hosts, and Track 7 closes on hosts demonstrating the SAME lifecycle.
+|- Fill the three CLIENT_SUPPLIED fields from what you measured this session:
+|    pin_state/pin_path      <- omatic_resolve_factory (STEP 1) — the RESOLVED
+|                               factory_file, never the persisted
+|                               factory_json_path, which means "no explicit
+|                               override" and has been misread as BLOCKED twice.
+|    connection_name         <- the connection you queried
+|    granted/configured      <- connections_list (STEP 2)
 |- IF degraded MCPs exist:
 |     "MCP: [connector_name] unavailable — [fallback_behavior one-liner]"
 |- IF all probed MCPs connected: silence is green.
@@ -236,6 +265,55 @@ STEP 5 — Standalone mode
 |- Apply standalone fallback rules (Section 5)
 +- Do not re-attempt plugin this session.
 ```
+
+***
+
+## 7b. The startup card — one shape, every host
+
+`SELECT * FROM v_startup_card` returns ONE row. Render it exactly like this. The
+same card on Claude Code, Cowork, Codex, Copilot and Xcode is what Track 7 closes
+on: *"every supported host demonstrates identify → resolve → contract → roster →
+READY/DEGRADED/BLOCKED in a fresh session."* A per-host summary cannot demonstrate
+that, because there is nothing to compare.
+
+```
+🤖 O-MATIC · an o-MATIC factory
+   omatic · v3.1.0 · DEGRADED
+
+   Pin         /Users/lucid/Documents/Work/O-Matic  (resolved)
+   Connection  o-MATIC  - Corp · o-matic · 3 of 7 granted
+   Retrieval   fts_only · last vector hit 6d ago
+   Corpus      1 unembedded · last embed 2h ago · drain in scope (inferred)
+   Roster      11/11 ready
+   Session     #173 2026-08-13 claude-code/ops/startup
+   Open        96 P1 · 229 total
+
+   ⚠ version=warn; retrieval=bad; corpus=warn; resume=warn
+```
+
+**Rules that make it a control rather than decoration:**
+
+- **`state` and `state_reason` come from the card. Never recompute them.** Two
+  readers deriving state from raw columns is how a factory ends up with two
+  answers about itself.
+- **Colour comes from `severity`**, which the card emits per field as
+  `ok`/`warn`/`bad`/`unknown`. Never invent a colour from a value you read.
+- **`unknown` is not `ok`.** Render it as unknown and say why. A field the card
+  refuses to guess is doing its job; flattening it to green destroys the signal.
+- **Print the age with every measurement.** "OK (probed 4m ago)" — never a bare OK.
+- **`fts_only` needs its age before it means anything.** If `last_retrieval_at` is
+  days old, the honest reading is *no retrieval has been attempted*, not
+  *retrieval is broken*. Measured 2026-08-15: o-matic showed `retrieval_state =
+  fts_only` with `last_event_at = 2026-08-09` — six days stale, 68 of 104 logged
+  events historically vector. The card reported `retrieval=bad` on an empty
+  window. Report the age; do not report an empty window as a failure.
+- **BLOCKED is a report, not a crash.** A brand-new factory returns one row with
+  `factory_id=UNKNOWN`, `state=BLOCKED`. Render it. That is the factory correctly
+  telling you it has not been set up.
+
+**Terse mode trims the report, never the query.** `fast` prints the header line
+plus any non-`ok` field and the resume note. The card is fetched in full every
+time.
 
 ***
 
@@ -547,6 +625,7 @@ Operator decision required: [yes/no]
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 17.0.0 | 2026-08-15 | **Track 7: the startup card becomes the startup report.** STEP 3 now queries `v_startup_card` FIRST, every mode — one row, ~49 columns, carrying its own computed READY/DEGRADED/BLOCKED with `state_reason` and per-field `severity`. New §7b defines the render, identical on every host, because Track 7 closes on hosts demonstrating the SAME lifecycle and a per-host summary cannot be compared. `v_startup_summary` is demoted to secondary: it CROSS JOINs `latest_session` and returns ZERO ROWS on a factory with no session history, which a HALT rule then turns into "broken" at the exact moment a fresh factory is started (task #339) — so a zero-row result is now reported as that defect and startup CONTINUES on the card. Render rules added: never recompute `state`, take colour from `severity`, `unknown` is not `ok`, print the age with every measurement, and `fts_only` means nothing without `last_retrieval_at` — measured 2026-08-15, o-matic reported `retrieval=bad` from a window whose newest event was six days old. |
 | 16.0.0 | 2026-08-09 | **Plugin 5.0.0: the connector stopped being a database client (decision #283).** §6 rewritten — the plugin's surface is now `omatic_select_factory`, `omatic_resolve_factory`, `omatic_runtime_status` only; every SQL, memory, task, decision, probe, work-claim and connection tool was DELETED and returns `Unknown tool`. All DB work moves to Conductor `factory_query` / `connections_list` / `embed_query` on loopback, named by Conductor's operator-facing connection names. STEP 1 now PINS the factory before probing (required on every host; cwd is not the project folder). STEP 3 is no longer a startup-runner tool call — Probot runs the battery itself against the granted connection, full battery in every mode, report depth only. STEP 2 reads grant state from `connections_list` and flags `legacy_connection_fields` for migration. `switch factory` no longer switches an active connection — name the connection per query; the mid-flow cross-tenant bleed hazard is removed rather than warned about. Retrieval: hybrid is the NORMAL path, `p_query_model_version` is required (task #222), and **Probot must now declare keyword-only degradation itself** because the tool that labelled it is gone. |
 | 15.0.0 | 2026-08-09 | **System 5.** §8.5 rewritten against measured `factory_config` and live schema: the tiers are 768-dim with `embedding_runtime`, the query vector comes from Conductor on loopback (not OpenAI), and the OpenAI credential table is replaced with the real embedding contract. The old section documented `text-embedding-3-small` @1536 and `openai_api_key` — all removed by the on-device migration on 2026-08-08, so any skill reading it was reading fiction. Added: retrieval-without-a-vector is a reportable degraded state (28 of 93 events measured keyword-only, vector path dead ~22h unnoticed); weights identity is a hard gate in both directions; a new "System 5 — recognising where a factory stands" section giving the four pre-5 tells, the conversion posture, and the `_omatic/blueprints/` convention. |
 | 14.4.0 | 2026-08-08 | `embedder-worker.js` retired in plugin 4.0.0 and replaced by `scripts/embed-drain.mjs`, which speaks the configured provider, covers both tiers, and verifies weights before writing. Recorded that an endpoint is not a drain: polling is still unowned. |

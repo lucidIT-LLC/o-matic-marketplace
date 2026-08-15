@@ -1,6 +1,6 @@
 {
   "name": "omatic-server-connection",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "license": "MIT",
   "description": "O-Matic factory resolution — the MCP plugin that pins a project to its O-Matic factory and ships Probot (orchestrator), Fred (storage), and Data (analyst) skills. As of 5.0.0 it is NOT a database client: it holds no credentials and runs no SQL. Database access goes through Conductor on loopback.",
   "author": {
