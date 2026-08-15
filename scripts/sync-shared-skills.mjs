@@ -67,6 +67,11 @@ const FRAGMENTS = [
       "o-matic-marketplace/omatic-server-connection/skills/data-o-matic-data/SKILL.md",
       "o-matic-marketplace/omatic-server-connection/skills/find-o-matic-fred/SKILL.md",
       "o-matic-marketplace/omatic-server-connection/skills/orch-o-matic-probot/SKILL.md",
+      // Added 2026-08-15, change-log item 6. The operating guide was the ONLY
+      // skill in this plugin with zero System 5 awareness — measured 0 mentions
+      // against 6-7 in the other three. It is the skill a converting operator
+      // reads first, so it was the worst possible one to leave behind.
+      "o-matic-marketplace/omatic-server-connection/skills/omatic-server-operating-guide/SKILL.md",
     ],
   },
 ];

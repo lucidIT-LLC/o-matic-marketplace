@@ -452,12 +452,20 @@ function runWithOutcome(fn) {
   return outcomeStore.run(new OutcomeCollector(), fn);
 }
 
+// Task #187. Every tool response used to be pretty-printed with `null, 2`, and
+// roughly 30% of the startup payload was indentation — whitespace a model pays
+// for on every single call and no human ever reads, because these responses are
+// consumed by an MCP client, not tailed in a terminal.
+//
+// Compact is the default. Files written to disk keep their indentation
+// (see factory.js) because those ARE read by people and diffed in git; a tool
+// response is neither.
 function jsonResponse(payload, isError = false) {
   return {
     content: [
       {
         type: "text",
-        text: JSON.stringify(payload, null, 2),
+        text: JSON.stringify(payload),
       },
     ],
     isError,
