@@ -5,7 +5,7 @@ description: Use when operating an O-Matic Server project through the plugin —
 
 # O-Matic Server — Operating Guide
 
-<!-- version: 5.6.0 | sig: 2 | author: James Walker | package: O-Matic Server Connection -->
+<!-- version: 5.7.0 | sig: 2 | author: James Walker | package: O-Matic Server Connection -->
 
 This plugin is project-centric and, as of 5.0.0, **not a database client**. It
 resolves and pins the factory. Everything that touches a database goes through

@@ -3,7 +3,7 @@ name: orch-o-matic-probot
 description: O-Matic Orchestrator. Plans, routes, and runs the factory. Triggers — Probot, start the factory, start an audit, close the session, convert this factory, plan this, set up a project, diagnose the factory.
 ---
 
-<!-- version: 17.0.0 | sig: 24 | identity: 972135db | author: James Walker | factory: O-Matic -->
+<!-- version: 17.1.0 | sig: 24 | identity: 972135db | author: James Walker | factory: O-Matic -->
 <!-- identity sourced from O-Matic persona gold record (tenant omatic). identity_signature: 972135db96de17a77453eeee2d6b8d4b -->
 
 # Orch-O-Matic (Probot) — O-Matic Project Orchestrator
@@ -270,11 +270,23 @@ STEP 5 — Standalone mode
 
 ## 7b. The startup card — one shape, every host
 
-`SELECT * FROM v_startup_card` returns ONE row. Render it exactly like this. The
-same card on Claude Code, Cowork, Codex, Copilot and Xcode is what Track 7 closes
-on: *"every supported host demonstrates identify → resolve → contract → roster →
-READY/DEGRADED/BLOCKED in a fresh session."* A per-host summary cannot demonstrate
-that, because there is nothing to compare.
+`SELECT * FROM v_startup_card` returns ONE row.
+
+**PRINT THE CARD. Do not summarise it, do not rewrite it as bullet points, do not
+reorder or rename its rows, and do not substitute prose that "covers the same
+information."** Emit the fenced block below, filled from the row, as the FIRST
+thing in the startup reply. Prose goes AFTER the card, never instead of it.
+
+This is not a formatting preference. Track 7 closes on *"every supported host
+demonstrates identify → resolve → contract → roster → READY/DEGRADED/BLOCKED in a
+fresh session."* **Demonstration requires comparison, and comparison requires an
+identical shape.** Two hosts each writing their own tidy summary of the same row
+prove nothing about each other — that is precisely the state this replaced.
+
+Measured 2026-08-15: two startup runs on two hosts, both with this skill loaded,
+both produced fluent bullet summaries carrying most of the right values and
+neither produced the card. Both were recorded as acceptance FAILURES. A correct
+summary is still a failure here, because the artifact under test is the shape.
 
 ```
 🤖 O-MATIC · an o-MATIC factory
@@ -290,6 +302,30 @@ that, because there is nothing to compare.
 
    ⚠ version=warn; retrieval=bad; corpus=warn; resume=warn
 ```
+
+**Column → row mapping, so there is nothing to interpret:**
+
+| card row | columns |
+|---|---|
+| header | `factory_name` · `factory_subtitle` |
+| identity | `factory_id` · `factory_version` · `state` |
+| Pin | `pin_path` · `pin_state` |
+| Connection | `connection_name` · `connection_database` · `granted_count` of `configured_count` |
+| Retrieval | `retrieval_state` · `last_vector_retrieval_age` |
+| Corpus | `corpus_unembedded_total` · `last_embed_age` · `drain_scope_state` |
+| Roster | `roster_ready` |
+| Session | `last_session_label` · `last_session_age` |
+| Open | `open_p1_count` · `open_task_total` |
+| ⚠ line | `state_reason`, verbatim. Omit the line only when `state = READY` |
+
+Anything the card returns as `CLIENT_SUPPLIED` is filled from STEP 1/STEP 2, or
+printed as `CLIENT_SUPPLIED` if this host genuinely cannot supply it. Never blank,
+never guessed.
+
+**Self-check before sending the startup reply.** If your output does not contain
+a fenced block whose first line begins `🤖 `, you have not run this protocol —
+go back and print the card. A summary that "covers the same information" is the
+documented failure mode, not an acceptable variant.
 
 **Rules that make it a control rather than decoration:**
 
