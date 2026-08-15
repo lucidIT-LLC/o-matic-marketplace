@@ -18,7 +18,7 @@ jobs:
           fetch-depth: 0   # full history + tags so monotonicity can compare against released tags
       - name: Fetch tags
         run: git fetch --tags --force
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
       - name: Run version-align (rule #287)

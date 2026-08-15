@@ -30,7 +30,7 @@ jobs:
         with:
           fetch-depth: 0
       - run: git fetch --tags --force
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
       - name: Verify rule #287 alignment
@@ -71,7 +71,7 @@ jobs:
         with:
           fetch-depth: 0
       - run: git fetch --tags --force
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
       - name: Configure git identity
