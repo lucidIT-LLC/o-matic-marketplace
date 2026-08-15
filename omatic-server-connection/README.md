@@ -164,14 +164,18 @@ node scripts/print-system-prompt.mjs probot
 node scripts/build-ollama-modelfile.mjs probot llama3.1:8b > Probot.Modelfile
 node scripts/sync-bundled-skills.mjs --dry-run
 node scripts/sync-bundled-skills.mjs
-OMATIC_PROJECT_ROOT=/path/to/factory node scripts/embed-drain.mjs --dry-run
+# RETIRED — see scripts/_retired/README.md. This script cannot run: it imports
+# server/connections.js, deleted in 5.0.0. Draining is Conductor's job now.
 ```
 
 `sync-bundled-skills.mjs` installs missing bundled skills into
 `${CODEX_HOME:-~/.codex}/skills`, updates older installed copies, and skips ones
 already the same version or newer.
 
-`scripts/embed-drain.mjs` is a standalone operator script, not a plugin tool. It
+`scripts/embed-drain.mjs` is **RETIRED** (moved to `scripts/_retired/`, 2026-08-15). It could
+not run — it imported `server/connections.js`, deleted in 5.0.0 when the plugin stopped being a
+database client, while `npm run check` syntax-checked it and reported green. Draining now runs
+inside Conductor on-device. Historically it
 talks to the embedding provider named in `factory_config` directly and is
 unaffected by this release.
 
@@ -196,7 +200,8 @@ omatic-server-connection/
     resources.js               # Resources + Prompts
     node_modules/              # runtime deps (@modelcontextprotocol/sdk only)
   bin/                         # launcher + advisory-mode fallback server
-  scripts/                     # smoke suite, prompt/Modelfile helpers, embed-drain
+  scripts/                     # smoke suite, prompt/Modelfile helpers
+    _retired/                  # scripts kept for the record; none are runnable
   adapters/                    # host-specific notes
 ```
 
