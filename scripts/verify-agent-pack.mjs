@@ -73,8 +73,28 @@ const entries = [];
   }
 })(pack);
 
-if (entries.length === 0) {
-  console.error("::error::found ZERO versioned agent entries in agent-pack.json — a check that examined nothing has proved nothing");
+// EXACT count, not "more than zero". Added at the Pass 2 re-gate, where Smith
+// proved the collector silently shrinks: the walk admits a node only when BOTH
+// skillKey(node) and node.version are truthy, so deleting an entry — or just its
+// `codex_skill` or `version` key — drops it from the checked population and the
+// script then reports "3 entries checked, 0 mismatches" and exits 0.
+//
+// The same commit that created this file raised the workflow's consumer guard
+// from `-lt 1` to an exact count for precisely this reason, and applied the same
+// principle to SKILL_TO_PLUGIN ("an unmapped entry is an unchecked entry") —
+// then left the collector three lines below it unguarded. A population that can
+// shrink unnoticed is not a control.
+//
+// When an agent is legitimately added or removed, this fails and you change the
+// number in the same commit. That cost is the point.
+const EXPECTED_AGENTS = 4;
+
+if (entries.length !== EXPECTED_AGENTS) {
+  console.error(
+    `::error::agent-pack.json yielded ${entries.length} versioned agent entries, expected ${EXPECTED_AGENTS}. ` +
+      `An entry missing its codex_skill or version key is dropped from this check SILENTLY. ` +
+      `If you added or removed an agent, update EXPECTED_AGENTS in scripts/verify-agent-pack.mjs in the same commit.`
+  );
   process.exit(1);
 }
 

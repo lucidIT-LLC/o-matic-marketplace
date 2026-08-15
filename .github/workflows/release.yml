@@ -36,6 +36,33 @@ jobs:
       - name: Verify rule #287 alignment
         run: node scripts/version-align.mjs
 
+      # EVERY GATE, NOT JUST THE VERSION ONE. Added at the Pass 2 re-gate.
+      #
+      # This job previously ran version-align alone, and `release` needs only
+      # this job. smoke and skill-sameness live in smoke.yml with no relationship
+      # to the release path, and there is no branch protection requiring them
+      # (docs/COMPLIANCE.md control 1). GitHub Actions cannot express a cross-
+      # workflow `needs:`, so the checks are duplicated here deliberately.
+      #
+      # This is not hypothetical. The run history shows `smoke` FAILURE and
+      # `verify-versions` SUCCESS on the same commit for three consecutive
+      # pushes (5.6.0, 5.7.0, 5.8.0). Had release.yml been pointed at `main`
+      # during that window it would have cut three tags and published three
+      # Releases off a tree whose sameness gate was red. Fixing the trigger
+      # removed the reason nothing shipped; it did not add the reason a bad
+      # tree cannot ship. This does.
+      - name: Skills match canonical
+        run: node scripts/sync-shared-skills.mjs --check
+      - name: Skill frontmatter name matches its directory
+        run: node scripts/verify-skill-names.mjs
+      - name: Root agent-pack.json matches canonical
+        run: node scripts/verify-agent-pack.mjs
+      - name: Vendored deps match the lockfile
+        run: node scripts/verify-vendored-deps.mjs -f
+      - name: Plugin smoke suite
+        working-directory: omatic-server-connection
+        run: npm run check
+
   release:
     needs: verify
     runs-on: ubuntu-latest

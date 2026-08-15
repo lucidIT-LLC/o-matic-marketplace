@@ -1,3 +1,27 @@
+> ## ⛔ RETIRED — HISTORICAL RECORD, NOT AN OPERATING INSTRUCTION
+>
+> **Superseded 2026-08-15 by decision #323.** Everything below describing a
+> `beta` → `stable` promotion model is **no longer how this repository works.**
+> There is now **one long-lived branch, `main`**; `stable` and `system-5` were
+> deleted and the repository default was switched. `release.yml` triggers on
+> `main`, and rule #325 records the model.
+>
+> **Retained, not deleted**, per the Stuff You Should Forget procedure: a document
+> that names a removed mechanism is marked retired with its replacement, never
+> silently dropped — the reasoning outlives the decision, and a reader who learned
+> this version needs to find where it went.
+>
+> **Why this banner exists at all.** A sibling document — `RELEASE-AUTOMATION.md` —
+> was left describing `stable` after the branch was deleted, and `release.yml` was
+> left triggering on it. Seven consecutive version bumps (5.2.0 → 5.8.0) then
+> pushed to a branch nothing watched: no tag, no Release, and nothing noticed,
+> because the version check stayed green and green read as shipped. This file is
+> the second copy of that condition. It is being marked rather than walked past.
+>
+> Read below for Factory 3.0 history. Do not follow it.
+
+---
+
 # Factory 3.0 — Beta Framework
 
 > **Branch:** `beta` (integration line). Features land here; `stable` fast-forwards from
