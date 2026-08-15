@@ -32,7 +32,7 @@ Control identifiers are given for SOC 2 (2017 TSC), HIPAA Security Rule
 
 | # | Control | SOC 2 | HIPAA | HITRUST | Status | Owner |
 |---|---|---|---|---|---|---|
-| 1 | Change management: reviewed, approved changes to the default branch | CC8.1 | §164.308(a)(1)(ii)(D) | 06.g | **OPEN** — no branch protection on `stable`; force-push permitted; no required review | Operator |
+| 1 | Change management: reviewed, approved changes to the default branch | CC8.1 | §164.308(a)(1)(ii)(D) | 06.g | **OPEN** — no branch protection on `main`; force-push permitted; no required review. (Re-stated 2026-08-15: this control named `stable`, a branch deleted by decision #323. Switching the default branch MOVED the unprotected surface, it did not create protection. A control naming a deleted object is unassessed, not open — and unassessed reads as assessed to a reviewer.) | Operator |
 | 2 | Secret detection in source control | CC6.1 | §164.312(a)(1) | 01.c | **OPEN** — secret scanning and push protection disabled | Operator |
 | 3 | Confidentiality of client identity in public artefacts | CC6.7, C1.1 | §164.502(a) | 13.j | **PARTIAL** — client name removed from published documentation; test fixtures still reference it | Carver |
 | 4 | Audit-log content control: no PHI in telemetry | CC7.2 | §164.312(b), §164.502(b) | 09.aa | **OPEN — owner moved** — the plugin no longer writes retrieval telemetry: `omatic_search_memory`, which called `fn_record_retrieval_event` on every invocation, was deleted in omatic-server-connection 5.0.0. The retained rows and the absence of redaction or retention limits are unchanged, and any caller now reaching `fn_search_*` directly may still record. Re-scope against Conductor before claiming improvement. | Data / Carver |
@@ -43,7 +43,7 @@ Control identifiers are given for SOC 2 (2017 TSC), HIPAA Security Rule
 | 9 | Least privilege / access enforcement | CC6.3 | §164.312(a)(1) | 01.c | **MET — evidence moved to Conductor** — the plugin's per-connection `read_write` / `read_only` / `disabled` chokepoint was deleted with the tools it guarded in 5.0.0. Enforcement is now Conductor's per-app grant plus the six confined LLM database roles from task #179, both of which sit below the caller rather than inside it. A grant refusal is a refusal, never an empty result. | Carver |
 | 10 | Supply-chain integrity: shipped runtime matches its lockfile | CC7.1 | — | 09.j | **MET** — `scripts/verify-vendored-deps.mjs` runs `npm ci` and fails CI on drift | Carver |
 | 11 | Vulnerability identification and triage | CC7.1 | §164.308(a)(1)(ii)(A) | 10.m | **PARTIAL** — Dependabot alerts enabled and triaged against pinned versions with the comparison recorded; no scheduled dependency refresh | Carver |
-| 12 | Release integrity: version metadata agrees across all sources | CC8.1 | — | 09.j | **MET** — `scripts/version-align.mjs` gates CI | Carver |
+| 12 | Release integrity: version metadata agrees across all sources | CC8.1 | — | 09.j | **PARTIAL** — re-stated 2026-08-15. `version-align.mjs` gates CI and covers every *declared* source, but its undeclared-source sweep walks `REPO_ROOT/<plugin>/<file>`, so the **root** `agent-pack.json` — the host-neutral manifest read for the Gemini and Ollama surfaces — is structurally invisible to it. It was measured shipping Tim at 4.0.2 against canonical 4.0.4 and Smith at 7.1.2 against 7.1.3 while this gate printed `aligned ✅`, and a ticket was closed on that green. Now covered by `scripts/verify-agent-pack.mjs` in the `skill-sameness` job. MET returns when a sweep finds undeclared version-bearing files anywhere in the tree, not only under a plugin directory | Carver |
 
 ## Open findings
 
@@ -51,7 +51,7 @@ Recorded 2026-08-08 from an adversarial review. Each maps to a row above.
 
 ### Critical
 
-**No branch protection on `stable`** (control 1). The default branch that every
+**No branch protection on `main`** (control 1). The default branch that every
 operator installs from accepts direct pushes and force-pushes, requires no
 review and no passing checks. There is no change-control evidence to produce.
 *Remediation:* require review and the `smoke`, `vendored-deps` and

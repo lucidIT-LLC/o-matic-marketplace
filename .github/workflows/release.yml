@@ -1,17 +1,23 @@
 name: release
 
-# State-reconciliation release. On every push to the default (stable) branch, for each
+# State-reconciliation release. On every push to the default branch (main), for each
 # plugin whose canonical catalog version has no matching immutable tag, cut
 # <plugin>-vX.Y.Z and publish a GitHub Release. Idempotent: already-released versions
 # are a no-op. The release job will NOT run unless the rule #287 verify job passes,
 # so no tag is ever cut off a drifted tree (Smith #3).
 #
-# Never touches the moving `stable` tag (decision #180). Never cuts the marketplace-wide
+# TRIGGER RETARGETED 2026-08-15. This fired on `stable`, which decision #323 DELETED when the
+# branch model collapsed to a single long-lived `main`. The workflow was not updated with it, so
+# seven consecutive version bumps (5.2.0 through 5.8.0) pushed to a branch this file did not
+# watch: no tag was cut, no Release was published, and nothing noticed because verify-versions
+# stayed green and green read as shipped. A version number moving is not a release.
+#
+# Never cuts the marketplace-wide
 # vX.Y.Z milestone — that stays manual (decision #177).
 
 on:
   push:
-    branches: ["stable"]
+    branches: ["main"]
 
 permissions:
   contents: write   # create/push tags and publish releases

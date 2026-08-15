@@ -25,7 +25,7 @@ not see it.
 | `scripts/backfill-versions.mjs` | One-time: forces drifted sources up to canonical (file edits only). |
 | `scripts/release-reconcile.mjs` | Cuts missing `<plugin>-vX.Y.Z` tags + GitHub Releases. Idempotent. |
 | `.github/workflows/verify-versions.yml` | Runs the gate on every push + PR. |
-| `.github/workflows/release.yml` | On push to `stable`: verify, then reconcile releases. |
+| `.github/workflows/release.yml` | On push to `main`: verify, then reconcile releases. |
 
 ## How to cut a release (the ritual)
 
@@ -34,7 +34,7 @@ not see it.
 2. Bump every other source for that plugin to match (`plugin.json`, `package.json`,
    `server/package.json`, runtime constants). Run `node scripts/version-align.mjs` until green.
 3. Open a PR. `verify-versions` must pass (it will fail on any drift or a downward bump).
-4. Merge to `stable`. `release.yml` runs the gate again, then cuts the immutable
+4. Push to `main`. `release.yml` runs the gate again, then cuts the immutable
    `<plugin>-vX.Y.Z` tag and publishes the Release. Already-released versions are skipped.
 
 Releasing multiple plugins in one merge is fine — reconciliation tags every plugin whose
@@ -44,11 +44,11 @@ canonical version lacks a tag.
 
 - **The marketplace-wide milestone `vX.Y.Z`** is cut **manually** when a catalog-level
   release is meaningful (decision #177). Checklist:
-  1. Confirm `verify-versions` is green on `stable`.
+  1. Confirm `verify-versions` is green on `main`.
   2. `git tag -a vX.Y.Z -m "O-Matic Marketplace vX.Y.Z"` on the release commit.
   3. `git push origin refs/tags/vX.Y.Z`
   4. `gh release create vX.Y.Z --repo lucidIT-LLC/o-matic-marketplace --title "O-Matic Marketplace vX.Y.Z" --notes "<catalog summary>"`
-- **The moving `stable` git tag** is never created or moved (decision #180 — it broke in-app
+- **A moving `stable` git tag** is never created or moved (decision #180 — it broke in-app
   updates). Channel is carried by the catalog's top-level `tags:["stable"]` (decision #194).
 
 ## Operator prerequisite — tag protection (Smith #4)
@@ -73,3 +73,20 @@ plugins (omatic-server-connection → 2.2.0, o-matic-wordpress-factory → 1.0.2
 across all sources. Review with `git diff`, stage **only** the version files, and PR into
 `stable`. (Two unrelated files — `server/embedder-worker.js` and the embedder `SKILL.md` —
 were already dirty in the tree from separate work; do not bundle them into the alignment PR.)
+
+---
+
+## Branch model, corrected 2026-08-15 (decision #323)
+
+There is **one long-lived branch: `main`.** `stable` and `system-5` were deleted and
+the repository default was switched. Every reference above previously said `stable`.
+
+**This document was not updated when the branch was deleted, and that had a cost.**
+`release.yml` also still triggered on `push: branches: ["stable"]`, so seven
+consecutive version bumps — 5.2.0 through 5.8.0 — pushed to a branch nothing
+watched. No tag was cut. No Release was published. Nothing noticed, because
+`verify-versions` stayed green on every push and green read as shipped.
+
+**A version number moving is not a release.** The check that would have caught it is
+two seconds long: `git ls-remote --tags origin | grep <version>`. Run it before
+claiming a version shipped.

@@ -68,9 +68,24 @@ jobs:
       - name: shared skill fragments match canonical
         working-directory: o-matic-marketplace
         run: node scripts/sync-shared-skills.mjs --check
-      - name: bundled skills match their source
+      # sync-bundled-skills.mjs is DELIBERATELY NOT RUN HERE. It resolves against
+      # ~/.codex/skills and ~/.codex/plugins/cache — HOST STATE. On a clean runner
+      # there is no ~/.codex, so all four skills report "install: missing (not
+      # installed)" and it exits 1 on every push, forever, for a reason that has
+      # nothing to do with drift.
+      #
+      # It was wired in at 5.4.0 and removed here at the Pass 2 Smith gate, which
+      # caught it by running the job under a fake HOME. audit-installed-skill-
+      # duplicates.mjs was correctly excluded for exactly this reason in the same
+      # commit that added this one — the same defect, judged two different ways in
+      # one file. A permanently red job is the failure that change-log item 22
+      # exists to close, not a stricter version of closing it.
+      #
+      # To run it against a real machine it needs a host-side hook, or a mode that
+      # audits the repo instead of the installed caches. Task #366.
+      - name: root agent-pack.json matches canonical
         working-directory: o-matic-marketplace
-        run: node scripts/sync-bundled-skills.mjs --check
+        run: node scripts/verify-agent-pack.mjs
       # Task #310. A SKILL.md whose frontmatter `name` disagrees with its parent
       # directory is SILENTLY ABSENT on VS Code — no error, no warning, the skill
       # just is not there. Two of four .agents skills shipped that way and it was
@@ -80,12 +95,23 @@ jobs:
         run: node scripts/verify-skill-names.mjs
       # Guard against the vacuous pass directly: if the check reports nothing at
       # all, the job has proved nothing. Assert it actually examined consumers.
-      - name: the check examined a non-empty consumer set
+      # The guard asserts an EXACT count, not "at least one". A >= 1 threshold
+      # against nine real consumers means eight entries can be deleted from the
+      # SHARED/FRAGMENTS arrays and this still passes green — which is precisely
+      # how a drift check gets quietly neutered. Raised from >= 1 to == EXPECTED
+      # at the Pass 2 Smith gate.
+      #
+      # When you legitimately add or remove a consumer, this fails and you update
+      # the number in the same commit. That is the point: changing the size of the
+      # checked population should require saying so.
+      - name: the check examined the expected consumer set
         working-directory: o-matic-marketplace
+        env:
+          EXPECTED_CONSUMERS: "9"
         run: |
           n=$(node scripts/sync-shared-skills.mjs --check 2>&1 | grep -c '^ok:' || true)
-          echo "consumers verified in sync: $n"
-          if [ "$n" -lt 1 ]; then
-            echo "::error::sync-shared-skills examined ZERO consumers — passing on an empty set proves nothing"
+          echo "consumers verified in sync: $n (expected $EXPECTED_CONSUMERS)"
+          if [ "$n" -ne "$EXPECTED_CONSUMERS" ]; then
+            echo "::error::sync-shared-skills examined $n consumers, expected $EXPECTED_CONSUMERS. If you added or removed one, update EXPECTED_CONSUMERS in this workflow in the same commit."
             exit 1
           fi
