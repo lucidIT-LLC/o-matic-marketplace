@@ -38,16 +38,55 @@ const selected = (name) => !only || only === name;
 
 // `source` is the canonical SKILL.md inside THIS marketplace repo.
 // `consumers` are paths RELATIVE TO THE WORKSPACE PLUGINS ROOT (repoRoot/..).
+// Task #296. The .agents/ tree is the Codex/VS Code delivery surface and it was
+// NOT tracking canonical — every copy in it had silently fallen behind:
+//   jo     canonical 4.0.2  ->  .agents 4.0.1
+//   smith  canonical 7.1.3  ->  .agents 7.1.1, and MISSING ITS IDENTITY SIGNATURE
+//   tim    canonical 4.0.4  ->  .agents 4.0.1
+// All three differed on disk, so a Codex operator and a Claude operator invoking
+// "the same" skill were running different files. The smith case is the worst: an
+// identity signature is what binds a skill to its persona gold record, and the
+// .agents copy had none, so it was unverifiable as well as stale.
+//
+// Registering them as consumers means CI now fails on drift (skill-sameness job)
+// rather than someone noticing a version number by eye months later.
 const SHARED = [
   {
     name: "jo",
     source: join(repoRoot, "jo", "skills", "jo", "SKILL.md"),
     consumers: [
-      // wp-factory carries a source copy (top-level) AND the packaged plugin copy
-      // (nested under plugins/) that the marketplace actually ships. Both track canonical.
-      "o-matic-wordpress-factory/skills/jo/SKILL.md",
-      "o-matic-wordpress-factory/plugins/o-matic-wordpress-factory/skills/jo/SKILL.md",
+      // PATHS CORRECTED 2026-08-15 (task #296). These were written WITHOUT the
+      // o-matic-marketplace/ prefix, so they resolved to a SIBLING REPO that does
+      // not exist — wp-factory is a directory INSIDE this repo. The result was a
+      // permanent silent skip: the in-repo copy sat at 4.0.1 against a canonical
+      // 4.0.2 while the check reported "not checked out in this workspace" every
+      // run, which reads as benign. A consumer path that never resolves is
+      // indistinguishable from having no consumer at all — the third jo copy in
+      // task #296 was created and sustained by exactly that.
+      //
+      // The second entry — a "packaged plugin copy" nested under
+      // o-matic-wordpress-factory/plugins/ — was ALSO removed: that directory
+      // does not exist and never has. wp-factory ships skills/{jo,
+      // wp-factory-brandy, wp-factory-carver, wp-factory-monet} directly. The
+      // entry described a layout that was planned or remembered, not built.
+      "o-matic-marketplace/o-matic-wordpress-factory/skills/jo/SKILL.md",
+      "o-matic-marketplace/.agents/skills/jo/SKILL.md",
     ],
+  },
+  {
+    name: "crit-o-matic-smith",
+    source: join(repoRoot, "smith", "skills", "crit-o-matic-smith", "SKILL.md"),
+    consumers: ["o-matic-marketplace/.agents/skills/crit-o-matic-smith/SKILL.md"],
+  },
+  {
+    name: "tool-o-matic-tim",
+    source: join(repoRoot, "tim", "skills", "tool-o-matic-tim", "SKILL.md"),
+    consumers: ["o-matic-marketplace/.agents/skills/tool-o-matic-tim/SKILL.md"],
+  },
+  {
+    name: "rimmer",
+    source: join(repoRoot, "rimmer", "skills", "rimmer", "SKILL.md"),
+    consumers: ["o-matic-marketplace/.agents/skills/rimmer/SKILL.md"],
   },
 ];
 
