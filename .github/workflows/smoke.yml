@@ -93,6 +93,23 @@ jobs:
       - name: skill frontmatter name matches its directory
         working-directory: o-matic-marketplace
         run: node scripts/verify-skill-names.mjs
+      # Task #379. Finder collision artifacts — "factory 2.js" beside
+      # "factory.js" — are a second definition the loader cannot tell from the
+      # first. 864 were found by hand in the plugins tree during #317. Two were
+      # real: a STALE VARIANT of server/factory.js (~16 diff lines, so which one
+      # loaded depended on the import path someone typed), and a
+      # smoke-startup-modes 2.mjs with NO live original that imported the module
+      # 5.0.0 deleted. Nothing in the release path looked.
+      #
+      # The script guards its own vacuous pass twice: it fails if it scanned
+      # zero files, AND if it did not descend into the directories that matter.
+      # It skips node_modules by DIRECTORY NAME, never by path substring — a
+      # `grep -v node_modules` swallows the whole tree the moment the checkout
+      # lands under a path containing the word, which on a runner is not ours to
+      # choose. Mutation-tested against a planted artifact before wiring.
+      - name: no Finder collision artifacts in the source tree
+        working-directory: o-matic-marketplace
+        run: node scripts/verify-no-collision-artifacts.mjs
       # Guard against the vacuous pass directly: if the check reports nothing at
       # all, the job has proved nothing. Assert it actually examined consumers.
       # The guard asserts an EXACT count, not "at least one". A >= 1 threshold
