@@ -23,14 +23,36 @@ import { readdirSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+// ONE implementation, two trees. The same defect recurred in the factory repo
+// (`/Users/lucid/Documents/Work/O-Matic`) within hours of this guard shipping here,
+// because CI fires on push and Finder-made untracked files never get that far — the
+// trigger did not match how the defect arrives. Rather than write a second checker
+// that drifts from this one, the root and the required directories are arguments.
+//   --root <path>       tree to scan          (default: this repo)
+//   --require a,b,c     directories that must be descended into, or the run FAILS
+const argv = process.argv.slice(2);
+function argOf(flag) {
+  const i = argv.indexOf(flag);
+  return i !== -1 && argv[i + 1] ? argv[i + 1] : null;
+}
+const repoRoot = argOf("--root") || join(dirname(fileURLToPath(import.meta.url)), "..");
 
 // Skipped by DIRECTORY NAME, never by matching a substring of the full path.
 // A path-substring exclusion (`grep -v node_modules`) silently swallows the
 // ENTIRE tree the moment the checkout lands under a directory that happens to
 // contain the word — on a CI runner that path is not ours to choose. Name-based
 // skipping cannot do that: it only ever skips a directory literally so named.
-const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".trash"]);
+// Note "build" AND "Build": this comparison is case-sensitive even though macOS
+// filesystems usually are not, and Xcode's directory is capitalised. Pointed at a
+// tree containing an Xcode build, an uncalibrated scan returns thousands of
+// intermediates and roughly 4MB of output — and a guard that loud is switched off
+// within a week, which is exactly how `find-unwired.sh` stopped being used.
+// Scope calibration is part of the check, not a convenience.
+const SKIP_DIRS = new Set([
+  "node_modules", ".git", "dist", "build", "Build", ".trash",
+  "DerivedData", "Intermediates.noindex", ".venv", "__pycache__",
+  ...(argOf("--skip") || "").split(",").map((s) => s.trim()).filter(Boolean),
+]);
 
 // The Finder shape: "<name> <n>.<ext>" or "<name> <n>", n >= 2.
 const COLLISION = / [2-9]\d*(\.[A-Za-z0-9]+)?$/;
@@ -43,7 +65,10 @@ const ALLOWLIST = new Set([]);
 // The check must fail if it cannot RUN, not merely if it finds nothing. These
 // directories must exist and must be descended into; if the repo layout changes
 // under it, this check reports that instead of passing on an empty scan.
-const REQUIRED_ROOTS = ["omatic-server-connection", "o-matic-wordpress-factory", "scripts"];
+const REQUIRED_ROOTS = (argOf("--require") || "omatic-server-connection,o-matic-wordpress-factory,scripts")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const scanned = [];
 const rootsSeen = new Set();
