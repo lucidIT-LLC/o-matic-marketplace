@@ -74,13 +74,13 @@ else
             /opt/homebrew/bin/node \
             /usr/local/bin/node \
             /usr/bin/node \
-            "$HOME/.local/bin/node" \
-            "$HOME/.volta/bin/node" \
-            "$HOME/.bun/bin/node" \
-            "$HOME"/.nvm/versions/node/*/bin/node \
-            "$HOME"/.fnm/node-versions/*/installation/bin/node \
-            "$HOME"/.asdf/installs/nodejs/*/bin/node \
-            "$HOME"/Library/Caches/*/node \
+            "${HOME:-}/.local/bin/node" \
+            "${HOME:-}/.volta/bin/node" \
+            "${HOME:-}/.bun/bin/node" \
+            "${HOME:-}"/.nvm/versions/node/*/bin/node \
+            "${HOME:-}"/.fnm/node-versions/*/installation/bin/node \
+            "${HOME:-}"/.asdf/installs/nodejs/*/bin/node \
+            "${HOME:-}"/Library/Caches/*/node \
             /snap/bin/node
         do
             if usable_node "$_candidate"; then

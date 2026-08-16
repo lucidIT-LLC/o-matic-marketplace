@@ -12,7 +12,7 @@
   "plugins": [
     {
       "name": "omatic-server-connection",
-      "version": "5.13.0",
+      "version": "5.14.0",
       "source": "./omatic-server-connection",
       "description": "O-Matic factory resolution — the MCP plugin that pins a project to its O-Matic factory and ships Probot (orchestrator), Fred (storage), and Data (analyst) skills. As of 5.0.0 it is NOT a database client: it holds no credentials and runs no SQL. Database access goes through Conductor on loopback.",
       "author": {
@@ -75,7 +75,7 @@
     },
     {
       "name": "o-matic-wordpress-factory",
-      "version": "1.2.3",
+      "version": "1.2.4",
       "source": "./o-matic-wordpress-factory",
       "description": "O-Matic WordPress Factory plugin with bundled brand, build, writing, and visual skills plus separate WordPress and Elementor MCP connectors.",
       "author": {
