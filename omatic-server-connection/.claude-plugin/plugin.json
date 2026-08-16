@@ -20,9 +20,9 @@
   "skills": "./skills/",
   "mcpServers": {
     "omatic-server-connection": {
-      "command": "/bin/sh",
+      "command": "node",
       "args": [
-        "${CLAUDE_PLUGIN_ROOT}/bin/omatic-launch.sh"
+        "${CLAUDE_PLUGIN_ROOT}/server/index.js"
       ],
       "env": {
         "OMATIC_PROJECT_ROOT": "${CLAUDE_PROJECT_DIR}",
