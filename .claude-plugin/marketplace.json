@@ -5,7 +5,7 @@
     "email": "lucideye@icloud.com"
   },
   "metadata": {
-    "description": "The O-Matic marketplace — every O-Matic plugin in one catalog. The o-matic.ai marketplace.",
+    "description": "The O-Matic marketplace \u2014 every O-Matic plugin in one catalog. The o-matic.ai marketplace.",
     "homepage": "https://o-matic.ai",
     "version": "2026-08-15"
   },
@@ -14,7 +14,7 @@
       "name": "omatic-server-connection",
       "version": "5.14.0",
       "source": "./omatic-server-connection",
-      "description": "O-Matic factory resolution — the MCP plugin that pins a project to its O-Matic factory and ships Probot (orchestrator), Fred (storage), and Data (analyst) skills. As of 5.0.0 it is NOT a database client: it holds no credentials and runs no SQL. Database access goes through Conductor on loopback.",
+      "description": "O-Matic factory resolution \u2014 the MCP plugin that pins a project to its O-Matic factory and ships Probot (orchestrator), Fred (storage), and Data (analyst) skills. As of 5.0.0 it is NOT a database client: it holds no credentials and runs no SQL. Database access goes through Conductor on loopback.",
       "author": {
         "name": "James Walker",
         "url": "https://o-matic.ai"
@@ -23,6 +23,22 @@
       "category": "Productivity",
       "tags": [
         "stable"
+      ]
+    },
+    {
+      "name": "omatic-factory-operations",
+      "version": "1.0.0",
+      "source": "./omatic-factory-operations",
+      "description": "The O-Matic factory operating layer as skills only \u2014 Probot (orchestrator), Fred (storage and custody), Data (analyst and factory DBA), plus the server operating guide. Declares NO MCP server by design, so it installs on hosted-marketplace and sandboxed hosts that cannot spawn one. Factory data is reached through Conductor; factory identity comes from the database packet, never from a local file.",
+      "author": {
+        "name": "James Walker",
+        "url": "https://o-matic.ai"
+      },
+      "homepage": "https://o-matic.ai",
+      "category": "Productivity",
+      "tags": [
+        "stable",
+        "skill-only"
       ]
     },
     {

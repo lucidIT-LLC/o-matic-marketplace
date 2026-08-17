@@ -1,0 +1,20 @@
+{
+  "name": "omatic-factory-operations",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "The O-Matic factory operating layer as skills only — Probot (orchestrator), Fred (storage and custody), Data (analyst and factory DBA), plus the server operating guide. Ships NO MCP server by design, so it installs on hosts that cannot spawn one. Database access is via Conductor.",
+  "author": {
+    "name": "James Walker / lucidIT-LLC",
+    "url": "https://o-matic.ai"
+  },
+  "homepage": "https://o-matic.ai",
+  "keywords": [
+    "orchestration",
+    "governance",
+    "factory-startup",
+    "storage",
+    "data-analysis",
+    "skill-only"
+  ],
+  "skills": "./skills/"
+}

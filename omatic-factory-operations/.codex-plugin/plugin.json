@@ -1,0 +1,41 @@
+{
+  "name": "omatic-factory-operations",
+  "version": "1.0.0",
+  "description": "The O-Matic factory operating layer as skills only — Probot (orchestrator), Fred (storage and custody), Data (analyst and factory DBA), plus the server operating guide. Ships no MCP server by design; database access is via Conductor.",
+  "author": {
+    "name": "James Walker / lucidIT-LLC",
+    "url": "https://o-matic.ai"
+  },
+  "homepage": "https://o-matic.ai",
+  "repository": "https://github.com/lucidIT-LLC/o-matic-marketplace",
+  "license": "MIT",
+  "keywords": [
+    "orchestration",
+    "governance",
+    "factory-startup",
+    "storage",
+    "data-analysis",
+    "skill-only"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "O-Matic Factory Operations",
+    "shortDescription": "Start, route, and run an O-Matic factory — orchestrator, storage, and data skills.",
+    "longDescription": "The constitutive operating layer of an O-Matic factory, packaged as skills with no MCP server attached. Probot plans, routes, and runs factory startup; Fred handles storage, file custody, and the session log; Data covers schema integrity, retrieval health, and factory DBA work. Because this pack declares no MCP server, it installs on hosts that cannot spawn one. Factory data is reached through Conductor, which holds every credential in the macOS Keychain.",
+    "developerName": "lucidIT-LLC",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Interactive"
+    ],
+    "websiteURL": "https://o-matic.ai",
+    "privacyPolicyURL": "https://o-matic.ai",
+    "termsOfServiceURL": "https://o-matic.ai",
+    "defaultPrompt": [
+      "Probot, start the factory.",
+      "Probot, start an audit.",
+      "Data, check retrieval health."
+    ],
+    "brandColor": "#00B5AD"
+  }
+}
